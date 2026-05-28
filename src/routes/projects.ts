@@ -1,0 +1,360 @@
+import { contentJson, OpenAPIRoute, fromHono } from "chanfana";
+import { AppContext } from "../types";
+import { z } from "zod";
+import { Hono } from "hono";
+import { generateUUID } from "../utils/id";
+import { getLLMProvider } from "../llm";
+
+export const projectsRouter = fromHono(new Hono<{ Bindings: Env }>());
+
+// 1. 创建项目（触发 LLM 市场分析与竞品推荐）
+export class CreateProject extends OpenAPIRoute {
+  schema = {
+    tags: ["Projects"],
+    summary: "Create a new project and trigger AI market analysis",
+    request: {
+      body: contentJson(
+        z.object({
+          description: z.string().min(5, "Description must be at least 5 characters long"),
+          name: z.string().optional(), // 用户若不提供则由 LLM 自动生成
+        })
+      ),
+    },
+    responses: {
+      "200": {
+        description: "Project created and analyzed successfully",
+        ...contentJson(
+          z.object({
+            success: z.boolean(),
+            result: z.object({
+              id: z.string(),
+              name: z.string(),
+              description: z.string(),
+              market_analysis: z.string(),
+              competitors: z.array(z.any()),
+            }),
+          })
+        ),
+      },
+    },
+  };
+
+  async handle(c: AppContext) {
+    const data = await this.getValidatedData<typeof this.schema>();
+    const db = c.env.DB;
+    const { description, name } = data.body;
+
+    // 1. 获取 LLM Provider
+    const provider = await getLLMProvider(db, c.env);
+    
+    // 2. 构造 Prompt
+    const systemPrompt = `You are a senior market research analyst.
+Analyze the user's proposed app idea and output a structured market analysis report in JSON format.
+The JSON must adhere to the following schema:
+{
+  "project_name": "A concise and catchy name for the project",
+  "market_overview": "A brief overview of the market trend, target audience, and main barriers.",
+  "competitors": [
+    {
+      "name": "Competitor App Name",
+      "description": "Brief description of their core features, strengths, and weaknesses.",
+      "rating": 4.2,
+      "estimated_reviews": 50000
+    }
+  ]
+}
+Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`json.`;
+
+    const userPrompt = `App Idea Description: "${description}"
+Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google Play.`;
+
+    let llmResultStr = "";
+    try {
+      llmResultStr = await provider.chat([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ], { response_format: 'json' });
+    } catch (err: any) {
+      throw new Error(`AI market analysis failed: ${err.message}`);
+    }
+
+    // 3. 解析 LLM 返回的 JSON
+    let analysisData: any;
+    try {
+      // 防止 LLM 强行包裹了 ```json ```
+      let cleanStr = llmResultStr.trim();
+      if (cleanStr.startsWith("```")) {
+        cleanStr = cleanStr.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+      }
+      analysisData = JSON.parse(cleanStr);
+    } catch (err) {
+      console.error("Failed to parse LLM response as JSON. Raw response:", llmResultStr);
+      throw new Error("AI returned invalid JSON structure.");
+    }
+
+    const projectId = generateUUID();
+    const finalProjectName = name || analysisData.project_name || "New Mining Project";
+    
+    // 查询当前使用的 llm_provider
+    const providerRow = await db
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .bind("llm_provider")
+      .first<{ value: string }>();
+    const currentProvider = providerRow?.value || "deepseek";
+
+    // 4. 将项目存入数据库
+    await db.prepare(
+      `INSERT INTO projects (id, name, description, market_analysis, llm_provider, status, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+    ).bind(
+      projectId,
+      finalProjectName,
+      description,
+      JSON.stringify({ market_overview: analysisData.market_overview }),
+      currentProvider,
+      "analyzed"
+    ).run();
+
+    // 5. 写入推荐的竞品
+    const competitorsList = analysisData.competitors || [];
+    const competitorInsertStmt = db.prepare(
+      `INSERT INTO competitors (id, project_id, name, description, package_name, icon_url, rating, estimated_reviews, review_count, scrape_status, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', datetime('now'), datetime('now'))`
+    );
+
+    const batch = [];
+    const insertedCompetitors = [];
+    for (const comp of competitorsList) {
+      const compId = generateUUID();
+      const compName = comp.name || "Unknown App";
+      const compDesc = comp.description || "";
+      const compRating = comp.rating || 0;
+      const estReviews = comp.estimated_reviews || 0;
+
+      batch.push(
+        competitorInsertStmt.bind(
+          compId,
+          projectId,
+          compName,
+          compDesc,
+          null, // 包名留空，用户手动填入
+          null, // 图标留空
+          compRating,
+          estReviews
+        )
+      );
+
+      insertedCompetitors.push({
+        id: compId,
+        name: compName,
+        description: compDesc,
+        rating: compRating,
+        estimated_reviews: estReviews,
+      });
+    }
+
+    if (batch.length > 0) {
+      await db.batch(batch);
+    }
+
+    return {
+      success: true,
+      result: {
+        id: projectId,
+        name: finalProjectName,
+        description: description,
+        market_analysis: JSON.stringify({ market_overview: analysisData.market_overview }),
+        competitors: insertedCompetitors,
+      },
+    };
+  }
+}
+
+// 2. 获取项目列表
+export class ListProjects extends OpenAPIRoute {
+  schema = {
+    tags: ["Projects"],
+    summary: "List all projects",
+    responses: {
+      "200": {
+        description: "Returns a list of projects",
+        ...contentJson(
+          z.object({
+            success: z.boolean(),
+            result: z.array(z.any()),
+          })
+        ),
+      },
+    },
+  };
+
+  async handle(c: AppContext) {
+    const db = c.env.DB;
+    const { results } = await db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all();
+    return {
+      success: true,
+      result: results,
+    };
+  }
+}
+
+// 3. 获取项目详情（含竞品列表）
+export class ReadProject extends OpenAPIRoute {
+  schema = {
+    tags: ["Projects"],
+    summary: "Get project details by ID with competitors",
+    request: {
+      params: z.object({
+        id: z.string(),
+      }),
+    },
+    responses: {
+      "200": {
+        description: "Returns project details",
+        ...contentJson(
+          z.object({
+            success: z.boolean(),
+            result: z.any(),
+          })
+        ),
+      },
+    },
+  };
+
+  async handle(c: AppContext) {
+    const data = await this.getValidatedData<typeof this.schema>();
+    const db = c.env.DB;
+    const projectId = data.params.id;
+
+    // 查项目
+    const project = await db.prepare("SELECT * FROM projects WHERE id = ?").bind(projectId).first();
+    if (!project) {
+      return c.json({ success: false, error: "Project not found" }, 404);
+    }
+
+    // 查竞品
+    const { results: competitors } = await db
+      .prepare("SELECT * FROM competitors WHERE project_id = ? ORDER BY rating DESC")
+      .bind(projectId)
+      .all();
+
+    return {
+      success: true,
+      result: {
+        ...project,
+        competitors,
+      },
+    };
+  }
+}
+
+// 4. 更新项目
+export class UpdateProject extends OpenAPIRoute {
+  schema = {
+    tags: ["Projects"],
+    summary: "Update project details",
+    request: {
+      params: z.object({
+        id: z.string(),
+      }),
+      body: contentJson(
+        z.object({
+          name: z.string().optional(),
+          description: z.string().optional(),
+          status: z.string().optional(),
+        })
+      ),
+    },
+    responses: {
+      "200": {
+        description: "Project updated successfully",
+        ...contentJson(
+          z.object({
+            success: z.boolean(),
+          })
+        ),
+      },
+    },
+  };
+
+  async handle(c: AppContext) {
+    const data = await this.getValidatedData<typeof this.schema>();
+    const db = c.env.DB;
+    const projectId = data.params.id;
+    const { name, description, status } = data.body;
+
+    const project = await db.prepare("SELECT id FROM projects WHERE id = ?").bind(projectId).first();
+    if (!project) {
+      return c.json({ success: false, error: "Project not found" }, 404);
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [];
+
+    if (name !== undefined) {
+      updates.push("name = ?");
+      params.push(name);
+    }
+    if (description !== undefined) {
+      updates.push("description = ?");
+      params.push(description);
+    }
+    if (status !== undefined) {
+      updates.push("status = ?");
+      params.push(status);
+    }
+
+    if (updates.length > 0) {
+      updates.push("updated_at = datetime('now')");
+      params.push(projectId); // 绑定 ID 到 WHERE 子句
+      const sql = `UPDATE projects SET ${updates.join(", ")} WHERE id = ?`;
+      await db.prepare(sql).bind(...params).run();
+    }
+
+    return {
+      success: true,
+    };
+  }
+}
+
+// 5. 删除项目
+export class DeleteProject extends OpenAPIRoute {
+  schema = {
+    tags: ["Projects"],
+    summary: "Delete project and all associated data",
+    request: {
+      params: z.object({
+        id: z.string(),
+      }),
+    },
+    responses: {
+      "200": {
+        description: "Project deleted successfully",
+        ...contentJson(
+          z.object({
+            success: z.boolean(),
+          })
+        ),
+      },
+    },
+  };
+
+  async handle(c: AppContext) {
+    const data = await this.getValidatedData<typeof this.schema>();
+    const db = c.env.DB;
+    const projectId = data.params.id;
+
+    // 因为建表时设置了 ON DELETE CASCADE，删除项目会自动级联删除相关的 competitors、reviews、project_analyses 等！
+    await db.prepare("DELETE FROM projects WHERE id = ?").bind(projectId).run();
+
+    return {
+      success: true,
+    };
+  }
+}
+
+projectsRouter.post("/", CreateProject);
+projectsRouter.get("/", ListProjects);
+projectsRouter.get("/:id", ReadProject);
+projectsRouter.put("/:id", UpdateProject);
+projectsRouter.delete("/:id", DeleteProject);

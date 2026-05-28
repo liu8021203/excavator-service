@@ -12,5 +12,8 @@
 			"database_name": "excavator-service-db",
 			"database_id": "63641ac8-c7f0-43ef-8c91-eaa92dd032ec"
 		}
-	]
+	],
+	"ai": {
+		"binding": "AI"
+	}
 }
