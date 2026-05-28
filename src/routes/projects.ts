@@ -7,16 +7,16 @@ import { getLLMProvider } from "../llm";
 
 export const projectsRouter = fromHono(new Hono<{ Bindings: Env }>());
 
-// 1. 创建项目（触发 LLM 市场分析与竞品推荐）
+// 1. 创建项目（触发 LLM 市场分析与竞品推荐，归属当前登录用户）
 export class CreateProject extends OpenAPIRoute {
   schema = {
     tags: ["Projects"],
-    summary: "Create a new project and trigger AI market analysis",
+    summary: "Create a new project, trigger AI market analysis and link to logged-in user",
     request: {
       body: contentJson(
         z.object({
           description: z.string().min(5, "Description must be at least 5 characters long"),
-          name: z.string().optional(), // 用户若不提供则由 LLM 自动生成
+          name: z.string().optional(),
         })
       ),
     },
@@ -43,6 +43,10 @@ export class CreateProject extends OpenAPIRoute {
     const data = await this.getValidatedData<typeof this.schema>();
     const db = c.env.DB;
     const { description, name } = data.body;
+
+    // 从 JWT Token 提取当前用户 ID
+    const jwtPayload = c.get("jwtPayload");
+    const userId = jwtPayload?.id || null;
 
     // 1. 获取 LLM Provider
     const provider = await getLLMProvider(db, c.env);
@@ -81,7 +85,6 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
     // 3. 解析 LLM 返回的 JSON
     let analysisData: any;
     try {
-      // 防止 LLM 强行包裹了 ```json ```
       let cleanStr = llmResultStr.trim();
       if (cleanStr.startsWith("```")) {
         cleanStr = cleanStr.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
@@ -102,17 +105,18 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
       .first<{ value: string }>();
     const currentProvider = providerRow?.value || "deepseek";
 
-    // 4. 将项目存入数据库
+    // 4. 将项目存入数据库 (写入 user_id 外键进行项目权限归属)
     await db.prepare(
-      `INSERT INTO projects (id, name, description, market_analysis, llm_provider, status, created_at, updated_at) 
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      `INSERT INTO projects (id, name, description, market_analysis, llm_provider, status, user_id, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
     ).bind(
       projectId,
       finalProjectName,
       description,
       JSON.stringify({ market_overview: analysisData.market_overview }),
       currentProvider,
-      "analyzed"
+      "analyzed",
+      userId
     ).run();
 
     // 5. 写入推荐的竞品
@@ -137,8 +141,8 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
           projectId,
           compName,
           compDesc,
-          null, // 包名留空，用户手动填入
-          null, // 图标留空
+          null,
+          null,
           compRating,
           estReviews
         )
@@ -170,14 +174,14 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
   }
 }
 
-// 2. 获取项目列表
+// 2. 获取项目列表（多用户项目隔离，只查出自己名下的项目）
 export class ListProjects extends OpenAPIRoute {
   schema = {
     tags: ["Projects"],
-    summary: "List all projects",
+    summary: "List projects belonging to the logged-in user",
     responses: {
       "200": {
-        description: "Returns a list of projects",
+        description: "Returns a list of user's projects",
         ...contentJson(
           z.object({
             success: z.boolean(),
@@ -190,7 +194,14 @@ export class ListProjects extends OpenAPIRoute {
 
   async handle(c: AppContext) {
     const db = c.env.DB;
-    const { results } = await db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all();
+    const jwtPayload = c.get("jwtPayload");
+    const userId = jwtPayload?.id || null;
+
+    const { results } = await db
+      .prepare("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC")
+      .bind(userId)
+      .all();
+
     return {
       success: true,
       result: results,
@@ -198,11 +209,11 @@ export class ListProjects extends OpenAPIRoute {
   }
 }
 
-// 3. 获取项目详情（含竞品列表）
+// 3. 获取项目详情（含越权校验）
 export class ReadProject extends OpenAPIRoute {
   schema = {
     tags: ["Projects"],
-    summary: "Get project details by ID with competitors",
+    summary: "Get project details with tenant ownership validation",
     request: {
       params: z.object({
         id: z.string(),
@@ -226,10 +237,17 @@ export class ReadProject extends OpenAPIRoute {
     const db = c.env.DB;
     const projectId = data.params.id;
 
-    // 查项目
-    const project = await db.prepare("SELECT * FROM projects WHERE id = ?").bind(projectId).first();
+    const jwtPayload = c.get("jwtPayload");
+    const userId = jwtPayload?.id || null;
+
+    // 查项目并校验 user_id 权限
+    const project = await db
+      .prepare("SELECT * FROM projects WHERE id = ? AND user_id = ?")
+      .bind(projectId, userId)
+      .first();
+
     if (!project) {
-      return c.json({ success: false, error: "Project not found" }, 404);
+      return c.json({ success: false, error: "Project not found or permission denied" }, 403);
     }
 
     // 查竞品
@@ -252,7 +270,7 @@ export class ReadProject extends OpenAPIRoute {
 export class UpdateProject extends OpenAPIRoute {
   schema = {
     tags: ["Projects"],
-    summary: "Update project details",
+    summary: "Update project details with ownership check",
     request: {
       params: z.object({
         id: z.string(),
@@ -283,9 +301,17 @@ export class UpdateProject extends OpenAPIRoute {
     const projectId = data.params.id;
     const { name, description, status } = data.body;
 
-    const project = await db.prepare("SELECT id FROM projects WHERE id = ?").bind(projectId).first();
+    const jwtPayload = c.get("jwtPayload");
+    const userId = jwtPayload?.id || null;
+
+    // 越权校验
+    const project = await db
+      .prepare("SELECT id FROM projects WHERE id = ? AND user_id = ?")
+      .bind(projectId, userId)
+      .first();
+
     if (!project) {
-      return c.json({ success: false, error: "Project not found" }, 404);
+      return c.json({ success: false, error: "Project not found or permission denied" }, 403);
     }
 
     const updates: string[] = [];
@@ -306,7 +332,7 @@ export class UpdateProject extends OpenAPIRoute {
 
     if (updates.length > 0) {
       updates.push("updated_at = datetime('now')");
-      params.push(projectId); // 绑定 ID 到 WHERE 子句
+      params.push(projectId); 
       const sql = `UPDATE projects SET ${updates.join(", ")} WHERE id = ?`;
       await db.prepare(sql).bind(...params).run();
     }
@@ -321,7 +347,7 @@ export class UpdateProject extends OpenAPIRoute {
 export class DeleteProject extends OpenAPIRoute {
   schema = {
     tags: ["Projects"],
-    summary: "Delete project and all associated data",
+    summary: "Delete project and associated details with ownership check",
     request: {
       params: z.object({
         id: z.string(),
@@ -344,7 +370,19 @@ export class DeleteProject extends OpenAPIRoute {
     const db = c.env.DB;
     const projectId = data.params.id;
 
-    // 因为建表时设置了 ON DELETE CASCADE，删除项目会自动级联删除相关的 competitors、reviews、project_analyses 等！
+    const jwtPayload = c.get("jwtPayload");
+    const userId = jwtPayload?.id || null;
+
+    // 越权校验
+    const project = await db
+      .prepare("SELECT id FROM projects WHERE id = ? AND user_id = ?")
+      .bind(projectId, userId)
+      .first();
+
+    if (!project) {
+      return c.json({ success: false, error: "Project not found or permission denied" }, 403);
+    }
+
     await db.prepare("DELETE FROM projects WHERE id = ?").bind(projectId).run();
 
     return {

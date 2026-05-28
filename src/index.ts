@@ -1,9 +1,11 @@
 import { ApiException, fromHono } from "chanfana";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { jwt } from "hono/jwt";
 import { ContentfulStatusCode } from "hono/utils/http-status";
 
 // 导入业务路由
+import { authRouter } from "./routes/auth";
 import { projectsRouter } from "./routes/projects";
 import { competitorsRouter } from "./routes/competitors";
 import { reviewsRouter } from "./routes/reviews";
@@ -24,11 +26,65 @@ app.use("*", cors({
   credentials: true,
 }));
 
+// ============================================================
+// JWT 鉴权中间件精细化策略挂载
+// ============================================================
+app.use("/api/auth/me", (c, next) => {
+  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
+  return jwt({ secret })(c, next);
+});
+
+app.use("/api/projects/*", (c, next) => {
+  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
+  return jwt({ secret })(c, next);
+});
+
+app.use("/api/analyses/*", (c, next) => {
+  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
+  return jwt({ secret })(c, next);
+});
+
+app.use("/api/project-analyses/*", (c, next) => {
+  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
+  return jwt({ secret })(c, next);
+});
+
+app.use("/api/settings/*", (c, next) => {
+  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
+  return jwt({ secret })(c, next);
+});
+
+// 竞品管理：GET 方式（爬虫免签读取）和 PUT /scrape_status 状态变更进行放行，其他写操作（手动添加、删除）强制 JWT 鉴权
+app.use("/api/competitors/*", async (c, next) => {
+  if (c.req.method === 'GET' || (c.req.method === 'PUT' && c.req.path.includes('/scrape_status'))) {
+    return next();
+  }
+  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
+  return jwt({ secret })(c, next);
+});
+
+// 评论管理（ reviews ）：全部放行，爬虫 CLI 上传回传与查询零门槛免签
+// （默认已全部放行，不设拦截即为免签）
+
+// ============================================================
+// 全局异常捕捉
+// ============================================================
 app.onError((err, c) => {
   if (err instanceof ApiException) {
     return c.json(
       { success: false, errors: err.buildResponse() },
       err.status as ContentfulStatusCode,
+    );
+  }
+
+  // 针对 JWT 校验失败给出友好提示
+  if (err.name === "JwtTokenInvalid" || err.name === "JwtTokenExpired" || err.message?.includes("jwt")) {
+    return c.json(
+      {
+        success: false,
+        error: "鉴权失败，请重新登录管理系统 (Unauthorized)",
+      },
+      401
     );
   }
 
@@ -49,13 +105,14 @@ const openapi = fromHono(app, {
   schema: {
     info: {
       title: "Excavator API",
-      version: "1.0.0",
+      version: "1.1.0",
       description: "APP Requirement Mining System Backend API (Hono + Chanfana + D1)",
     },
   },
 });
 
 // 注册业务 API 路由
+openapi.route("/api/auth", authRouter);
 openapi.route("/api/projects", projectsRouter);
 openapi.route("/api/competitors", competitorsRouter);
 openapi.route("/api/reviews", reviewsRouter);

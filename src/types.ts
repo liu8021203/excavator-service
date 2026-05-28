@@ -8,5 +8,6 @@ declare global {
   interface Env {
     DEEPSEEK_API_KEY?: string;
     GEMINI_API_KEY?: string;
+    JWT_SECRET?: string;
   }
 }
