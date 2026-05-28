@@ -16,7 +16,7 @@ export class CreateAnalysis extends OpenAPIRoute {
       body: contentJson(
         z.object({
           competitor_id: z.string(),
-          rating_filter: z.enum(["negative", "positive"]), // negative: 1-3星, positive: 4-5星
+          rating_filter: z.enum(["negative", "positive"]),
           batch_size: z.number().int().optional().default(500),
         })
       ),
@@ -26,8 +26,9 @@ export class CreateAnalysis extends OpenAPIRoute {
         description: "Analysis task initialized and running in background",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               id: z.string(),
               status: z.string(),
             }),
@@ -42,16 +43,14 @@ export class CreateAnalysis extends OpenAPIRoute {
     const db = c.env.DB;
     const { competitor_id, rating_filter, batch_size } = data.body;
 
-    // 1. 验证竞品
     const competitor = await db
       .prepare("SELECT name FROM competitors WHERE id = ?")
       .bind(competitor_id)
       .first<{ name: string }>();
     if (!competitor) {
-      return c.json({ success: false, error: "Competitor not found" }, 404);
+      return c.json({ code: 404, message: "竞品不存在", data: null }, 404);
     }
 
-    // 2. 查出对应评论
     const ratingCondition = rating_filter === "negative" ? "rating <= 3" : "rating >= 4";
     const { results: rawReviews } = await db
       .prepare(`SELECT user_name, rating, text, thumbs_up, review_date FROM reviews WHERE competitor_id = ? AND ${ratingCondition}`)
@@ -60,18 +59,16 @@ export class CreateAnalysis extends OpenAPIRoute {
 
     const totalReviews = rawReviews.length;
     if (totalReviews === 0) {
-      return c.json({ success: false, error: `No reviews found matching rating_filter: ${rating_filter}` }, 400);
+      return c.json({ code: 400, message: `该评分分组暂无评论，无法分析 (rating_filter: ${rating_filter})`, data: null }, 400);
     }
 
     const analysisId = generateUUID();
 
-    // 3. 在 settings 查当前 llm 设置以记录元数据
     const providerRow = await db.prepare("SELECT value FROM settings WHERE key = ?").bind("llm_provider").first<{ value: string }>();
     const currentProvider = providerRow?.value || "deepseek";
     const modelRow = await db.prepare(`SELECT value FROM settings WHERE key = ?`).bind(`llm_model_${currentProvider}`).first<{ value: string }>();
-    const currentModel = modelRow?.value || (currentProvider === "deepseek" ? "deepseek-chat" : "gemini-2.5-flash");
+    const currentModel = modelRow?.value || (currentProvider === "deepseek" ? "deepseek-chat" : "google/gemini-3.1-pro");
 
-    // 4. 创建初始 analyses 记录，状态设为 'processing'
     await db.prepare(
       `INSERT INTO analyses (id, competitor_id, rating_filter, total_reviews, batch_size, status, llm_provider, llm_model, created_at, updated_at) 
        VALUES (?, ?, ?, ?, ?, 'processing', ?, ?, datetime('now'), datetime('now'))`
@@ -85,13 +82,10 @@ export class CreateAnalysis extends OpenAPIRoute {
       currentModel
     ).run();
 
-    // 5. 开启后台异步分析流程，不阻塞当前 HTTP 返回
     c.executionCtx.waitUntil(
       (async () => {
         try {
           const provider = await getLLMProvider(db, c.env);
-          
-          // 分批处理评论
           const batchesCount = Math.ceil(totalReviews / batch_size);
           const batchResults: any[] = [];
 
@@ -101,13 +95,11 @@ export class CreateAnalysis extends OpenAPIRoute {
             const batchReviews = rawReviews.slice(start, end);
 
             const batchId = generateUUID();
-            // 在 D1 创建这一批的记录
             await db.prepare(
               `INSERT INTO analysis_batches (id, analysis_id, batch_index, review_count, status, created_at) 
                VALUES (?, ?, ?, ?, 'processing', datetime('now'))`
             ).bind(batchId, analysisId, i, batchReviews.length).run();
 
-            // 构造这批评论的文本
             const reviewsText = batchReviews
               .map((r, idx) => `[Review #${idx + 1}] Date: ${r.review_date} | Rating: ${r.rating}* | Likes: ${r.thumbs_up}\nUser: ${r.user_name || "Anonymous"}\nContent: ${r.text || ""}`)
               .join("\n---\n");
@@ -153,7 +145,6 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
               throw err;
             }
 
-            // 清理并解析 JSON
             let cleanResponse = responseStr.trim();
             if (cleanResponse.startsWith("```")) {
               cleanResponse = cleanResponse.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
@@ -167,7 +158,6 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
               parsedResult = { pain_points: [], feature_requests: [], sentiment_summary: "Parsing error", opportunities: [] };
             }
 
-            // 更新 batch 状态与结果
             await db.prepare(
               "UPDATE analysis_batches SET status = 'completed', result = ? WHERE id = ?"
             ).bind(JSON.stringify(parsedResult), batchId).run();
@@ -175,14 +165,11 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
             batchResults.push(parsedResult);
           }
 
-          // Map-Reduce 的 Reduce 阶段
           let finalConsolidatedResult: any;
 
           if (batchResults.length === 1) {
-            // 只有 1 批，无需汇总
             finalConsolidatedResult = batchResults[0];
           } else {
-            // 多批进行 LLM 汇总
             const systemConsolidatePrompt = `You are a brilliant market researcher and product manager.
 You have analyzed multiple batches of user reviews for the competitor app "${competitor.name}".
 Now, combine these batch analysis results into a single, unified, high-quality final report.
@@ -229,7 +216,6 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
               finalConsolidatedResult = JSON.parse(cleanReduce);
             } catch {
               console.error("Consolidated parse failed. Raw response:", reduceResponseStr);
-              // 退化方案：直接简单拼装
               finalConsolidatedResult = {
                 pain_points: batchResults.flatMap(b => b.pain_points || []),
                 feature_requests: batchResults.flatMap(b => b.feature_requests || []),
@@ -239,7 +225,6 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
             }
           }
 
-          // 最终写入 D1
           await db.prepare(
             `UPDATE analyses 
              SET status = 'completed', 
@@ -267,8 +252,9 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
     );
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "AI 分析任务已提交并在后台运行",
+      data: {
         id: analysisId,
         status: "processing",
       },
@@ -291,8 +277,9 @@ export class ReadAnalysis extends OpenAPIRoute {
         description: "Returns analysis results and metadata",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.any(),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.any(),
           })
         ),
       },
@@ -306,10 +293,9 @@ export class ReadAnalysis extends OpenAPIRoute {
 
     const analysis = await db.prepare("SELECT * FROM analyses WHERE id = ?").bind(analysisId).first();
     if (!analysis) {
-      return c.json({ success: false, error: "Analysis task not found" }, 404);
+      return c.json({ code: 404, message: "分析任务未找到", data: null }, 404);
     }
 
-    // 将 JSON 字符串字段 parse 回对象
     const parsedResult = {
       ...analysis,
       pain_points: analysis.pain_points ? JSON.parse(analysis.pain_points as string) : [],
@@ -318,8 +304,9 @@ export class ReadAnalysis extends OpenAPIRoute {
     };
 
     return {
-      success: true,
-      result: parsedResult,
+      code: 200,
+      message: "获取分析报告详情成功",
+      data: parsedResult,
     };
   }
 }
@@ -339,8 +326,9 @@ export class ListAnalyses extends OpenAPIRoute {
         description: "Returns analysis task list",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.array(z.any()),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.array(z.any()),
           })
         ),
       },
@@ -358,8 +346,9 @@ export class ListAnalyses extends OpenAPIRoute {
       .all();
 
     return {
-      success: true,
-      result: results,
+      code: 200,
+      message: "获取分析任务列表成功",
+      data: results,
     };
   }
 }

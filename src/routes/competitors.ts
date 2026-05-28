@@ -21,8 +21,9 @@ export class ListCompetitors extends OpenAPIRoute {
         description: "Returns a list of competitors",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.array(z.any()),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.array(z.any()),
           })
         ),
       },
@@ -46,8 +47,9 @@ export class ListCompetitors extends OpenAPIRoute {
 
     const { results } = await db.prepare(sql).bind(...params).all();
     return {
-      success: true,
-      result: results,
+      code: 200,
+      message: "获取竞品列表成功",
+      data: results,
     };
   }
 }
@@ -77,7 +79,9 @@ export class UpdateCompetitor extends OpenAPIRoute {
         description: "Competitor updated successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.any().nullable().optional(),
           })
         ),
       },
@@ -92,7 +96,7 @@ export class UpdateCompetitor extends OpenAPIRoute {
 
     const competitor = await db.prepare("SELECT id FROM competitors WHERE id = ?").bind(competitorId).first();
     if (!competitor) {
-      return c.json({ success: false, error: "Competitor not found" }, 404);
+      return c.json({ code: 404, message: "竞品不存在", data: null }, 404);
     }
 
     const updates: string[] = [];
@@ -131,7 +135,9 @@ export class UpdateCompetitor extends OpenAPIRoute {
     }
 
     return {
-      success: true,
+      code: 200,
+      message: "修改竞品信息成功",
+      data: null,
     };
   }
 }
@@ -158,8 +164,9 @@ export class CreateCompetitor extends OpenAPIRoute {
         description: "Competitor manually added successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               id: z.string(),
             }),
           })
@@ -173,10 +180,9 @@ export class CreateCompetitor extends OpenAPIRoute {
     const db = c.env.DB;
     const { project_id, name, description, package_name, rating, estimated_reviews } = data.body;
 
-    // 检查项目是否存在
     const project = await db.prepare("SELECT id FROM projects WHERE id = ?").bind(project_id).first();
     if (!project) {
-      return c.json({ success: false, error: "Project not found" }, 404);
+      return c.json({ code: 404, message: "所属项目不存在", data: null }, 404);
     }
 
     const competitorId = generateUUID();
@@ -194,8 +200,9 @@ export class CreateCompetitor extends OpenAPIRoute {
     ).run();
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "手动添加竞品成功",
+      data: {
         id: competitorId,
       },
     };
@@ -217,7 +224,9 @@ export class DeleteCompetitor extends OpenAPIRoute {
         description: "Competitor deleted successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.any().nullable().optional(),
           })
         ),
       },
@@ -232,7 +241,9 @@ export class DeleteCompetitor extends OpenAPIRoute {
     await db.prepare("DELETE FROM competitors WHERE id = ?").bind(competitorId).run();
 
     return {
-      success: true,
+      code: 200,
+      message: "竞品删除成功",
+      data: null,
     };
   }
 }

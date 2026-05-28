@@ -27,7 +27,7 @@ export class UploadReviews extends OpenAPIRoute {
         z.object({
           competitor_id: z.string(),
           reviews: z.array(singleReviewUploadSchema),
-          is_completed: z.boolean().optional().default(false), // 爬虫标记是否已全部完成
+          is_completed: z.boolean().optional().default(false),
         })
       ),
     },
@@ -36,8 +36,9 @@ export class UploadReviews extends OpenAPIRoute {
         description: "Reviews processed successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               uploaded: z.number().int(),
               total: z.number().int(),
             }),
@@ -52,13 +53,11 @@ export class UploadReviews extends OpenAPIRoute {
     const db = c.env.DB;
     const { competitor_id, reviews, is_completed } = data.body;
 
-    // 检查竞品是否存在
     const comp = await db.prepare("SELECT id FROM competitors WHERE id = ?").bind(competitor_id).first();
     if (!comp) {
-      return c.json({ success: false, error: "Competitor not found" }, 404);
+      return c.json({ code: 404, message: "所属竞品不存在", data: null }, 404);
     }
 
-    // 批量插入 D1 reviews Table
     const insertStmt = db.prepare(
       `INSERT OR IGNORE INTO reviews (id, competitor_id, review_id, user_name, rating, text, thumbs_up, reply_text, review_date, created_at) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
@@ -86,14 +85,12 @@ export class UploadReviews extends OpenAPIRoute {
       await db.batch(batch);
     }
 
-    // 统计目前竞品已存的去重后评论总数
     const countRow = await db
       .prepare("SELECT COUNT(*) as total FROM reviews WHERE competitor_id = ?")
       .bind(competitor_id)
       .first<{ total: number }>();
     const totalCount = countRow?.total || 0;
 
-    // 更新 competitors 的已爬取数量和爬取状态
     let scrapeStatus = "scraping";
     if (is_completed) {
       scrapeStatus = "completed";
@@ -109,8 +106,9 @@ export class UploadReviews extends OpenAPIRoute {
     ).bind(totalCount, scrapeStatus, competitor_id).run();
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "评论回传上传处理成功",
+      data: {
         uploaded: reviews.length,
         total: totalCount,
       },
@@ -126,7 +124,7 @@ export class ListReviews extends OpenAPIRoute {
     request: {
       query: z.object({
         competitor_id: z.string(),
-        min_rating: z.string().optional(), // 字符串类型以支持 Query 传参转换
+        min_rating: z.string().optional(),
         max_rating: z.string().optional(),
         page: z.string().optional().default("1"),
         limit: z.string().optional().default("20"),
@@ -137,8 +135,9 @@ export class ListReviews extends OpenAPIRoute {
         description: "Returns a paginated list of reviews",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               list: z.array(z.any()),
               total: z.number().int(),
               page: z.number().int(),
@@ -171,18 +170,17 @@ export class ListReviews extends OpenAPIRoute {
       params.push(parseInt(max_rating));
     }
 
-    // 查总数
     const countSql = `SELECT COUNT(*) as total ${baseSql}`;
     const totalRow = await db.prepare(countSql).bind(...params).first<{ total: number }>();
     const total = totalRow?.total || 0;
 
-    // 查列表
     const listSql = `SELECT * ${baseSql} ORDER BY review_date DESC, created_at DESC LIMIT ? OFFSET ?`;
     const { results } = await db.prepare(listSql).bind(...params, limitInt, offset).all();
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "获取评论列表成功",
+      data: {
         list: results,
         total,
         page: pageInt,
@@ -207,12 +205,13 @@ export class GetReviewsStats extends OpenAPIRoute {
         description: "Returns review counts and distributions",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               total: z.number().int(),
-              negative: z.number().int(), // ⭐1-3
-              positive: z.number().int(), // ⭐4-5
-              distribution: z.record(z.string(), z.number().int()), // 各评分分布如 {"1": 10, "2": 5, ...}
+              negative: z.number().int(),
+              positive: z.number().int(),
+              distribution: z.record(z.string(), z.number().int()),
             }),
           })
         ),
@@ -251,8 +250,9 @@ export class GetReviewsStats extends OpenAPIRoute {
     }
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "获取评论分布统计成功",
+      data: {
         total,
         negative,
         positive,

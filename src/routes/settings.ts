@@ -15,8 +15,9 @@ export class GetSettings extends OpenAPIRoute {
         description: "Returns all settings in key-value map",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.record(z.string(), z.any()),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.record(z.string(), z.any()),
           })
         ),
       },
@@ -42,8 +43,9 @@ export class GetSettings extends OpenAPIRoute {
     }
 
     return {
-      success: true,
-      result: settingsMap,
+      code: 200,
+      message: "获取设置成功",
+      data: settingsMap,
     };
   }
 }
@@ -65,7 +67,9 @@ export class UpdateSettings extends OpenAPIRoute {
         description: "Settings updated successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.any().nullable().optional(),
           })
         ),
       },
@@ -90,7 +94,9 @@ export class UpdateSettings extends OpenAPIRoute {
     }
 
     return {
-      success: true,
+      code: 200,
+      message: "更新设置成功",
+      data: null,
     };
   }
 }

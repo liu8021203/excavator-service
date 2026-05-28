@@ -25,8 +25,9 @@ export class RegisterEndpoint extends OpenAPIRoute {
         description: "User registered successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               id: z.string(),
               username: z.string(),
             }),
@@ -47,7 +48,7 @@ export class RegisterEndpoint extends OpenAPIRoute {
       .first();
 
     if (existing) {
-      return c.json({ success: false, error: "Username already exists" }, 400);
+      return c.json({ code: 400, message: "用户名已被占用", data: null }, 400);
     }
 
     const userId = generateUUID();
@@ -59,8 +60,9 @@ export class RegisterEndpoint extends OpenAPIRoute {
     ).bind(userId, username, password).run();
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "注册成功",
+      data: {
         id: userId,
         username,
       },
@@ -86,8 +88,9 @@ export class LoginEndpoint extends OpenAPIRoute {
         description: "Logged in successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               token: z.string(),
               user: z.object({
                 id: z.string(),
@@ -111,12 +114,12 @@ export class LoginEndpoint extends OpenAPIRoute {
       .first<{ id: string; username: string; password: string }>();
 
     if (!user) {
-      return c.json({ success: false, error: "Invalid username or password" }, 401);
+      return c.json({ code: 401, message: "用户名或密码错误", data: null }, 401);
     }
 
     // 直接进行明文密码比对！
     if (user.password !== password) {
-      return c.json({ success: false, error: "Invalid username or password" }, 401);
+      return c.json({ code: 401, message: "用户名或密码错误", data: null }, 401);
     }
 
     const jwtSecret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
@@ -129,8 +132,9 @@ export class LoginEndpoint extends OpenAPIRoute {
     const token = await sign(payload, jwtSecret);
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "登录成功",
+      data: {
         token,
         user: {
           id: user.id,
@@ -151,8 +155,9 @@ export class ReadMeEndpoint extends OpenAPIRoute {
         description: "User details retrieved successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               id: z.string(),
               username: z.string(),
               roles: z.array(z.string()),
@@ -175,12 +180,13 @@ export class ReadMeEndpoint extends OpenAPIRoute {
       .first<{ id: string; username: string }>();
 
     if (!user) {
-      return c.json({ success: false, error: "User not found or unauthenticated" }, 404);
+      return c.json({ code: 404, message: "账户不存在", data: null }, 404);
     }
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "获取个人信息成功",
+      data: {
         id: user.id,
         username: user.username,
         roles: ["admin"], // 提供 Vben 所需的角色

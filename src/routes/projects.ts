@@ -25,8 +25,9 @@ export class CreateProject extends OpenAPIRoute {
         description: "Project created and analyzed successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               id: z.string(),
               name: z.string(),
               description: z.string(),
@@ -44,7 +45,6 @@ export class CreateProject extends OpenAPIRoute {
     const db = c.env.DB;
     const { description, name } = data.body;
 
-    // 从 JWT Token 提取当前用户 ID
     const jwtPayload = c.get("jwtPayload");
     const userId = jwtPayload?.id || null;
 
@@ -162,8 +162,9 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
     }
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "项目创建成功并已初始化推荐竞品",
+      data: {
         id: projectId,
         name: finalProjectName,
         description: description,
@@ -184,8 +185,9 @@ export class ListProjects extends OpenAPIRoute {
         description: "Returns a list of user's projects",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.array(z.any()),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.array(z.any()),
           })
         ),
       },
@@ -203,8 +205,9 @@ export class ListProjects extends OpenAPIRoute {
       .all();
 
     return {
-      success: true,
-      result: results,
+      code: 200,
+      message: "获取项目列表成功",
+      data: results,
     };
   }
 }
@@ -224,8 +227,9 @@ export class ReadProject extends OpenAPIRoute {
         description: "Returns project details",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.any(),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.any(),
           })
         ),
       },
@@ -247,7 +251,7 @@ export class ReadProject extends OpenAPIRoute {
       .first();
 
     if (!project) {
-      return c.json({ success: false, error: "Project not found or permission denied" }, 403);
+      return c.json({ code: 403, message: "项目不存在或无权访问", data: null }, 403);
     }
 
     // 查竞品
@@ -257,8 +261,9 @@ export class ReadProject extends OpenAPIRoute {
       .all();
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "获取项目详情成功",
+      data: {
         ...project,
         competitors,
       },
@@ -288,7 +293,9 @@ export class UpdateProject extends OpenAPIRoute {
         description: "Project updated successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.any().nullable().optional(),
           })
         ),
       },
@@ -311,7 +318,7 @@ export class UpdateProject extends OpenAPIRoute {
       .first();
 
     if (!project) {
-      return c.json({ success: false, error: "Project not found or permission denied" }, 403);
+      return c.json({ code: 403, message: "项目不存在或无权操作", data: null }, 403);
     }
 
     const updates: string[] = [];
@@ -338,7 +345,9 @@ export class UpdateProject extends OpenAPIRoute {
     }
 
     return {
-      success: true,
+      code: 200,
+      message: "修改项目成功",
+      data: null,
     };
   }
 }
@@ -358,7 +367,9 @@ export class DeleteProject extends OpenAPIRoute {
         description: "Project deleted successfully",
         ...contentJson(
           z.object({
-            success: z.boolean(),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.any().nullable().optional(),
           })
         ),
       },
@@ -380,13 +391,15 @@ export class DeleteProject extends OpenAPIRoute {
       .first();
 
     if (!project) {
-      return c.json({ success: false, error: "Project not found or permission denied" }, 403);
+      return c.json({ code: 403, message: "项目不存在或无权操作", data: null }, 403);
     }
 
     await db.prepare("DELETE FROM projects WHERE id = ?").bind(projectId).run();
 
     return {
-      success: true,
+      code: 200,
+      message: "项目删除成功",
+      data: null,
     };
   }
 }

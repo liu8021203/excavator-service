@@ -24,8 +24,9 @@ export class CreateProjectAnalysis extends OpenAPIRoute {
         description: "Synthesis report generation initialized",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.object({
+            code: z.number().int(),
+            message: z.string(),
+            data: z.object({
               id: z.string(),
               status: z.string(),
             }),
@@ -43,7 +44,7 @@ export class CreateProjectAnalysis extends OpenAPIRoute {
     // 1. 验证项目是否存在
     const project = await db.prepare("SELECT name FROM projects WHERE id = ?").bind(project_id).first();
     if (!project) {
-      return c.json({ success: false, error: "Project not found" }, 404);
+      return c.json({ code: 404, message: "所属项目未找到", data: null }, 404);
     }
 
     // 2. 查出该项目下所有已完成的单竞品分析
@@ -56,7 +57,7 @@ export class CreateProjectAnalysis extends OpenAPIRoute {
 
     if (analysesList.length === 0) {
       return c.json(
-        { success: false, error: "No completed competitor analyses found. Please run competitor review analysis first." },
+        { code: 400, message: "该项目下暂无已完成的单竞品分析，请先完成竞品分析再进行汇总。", data: null },
         400
       );
     }
@@ -195,8 +196,9 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
     );
 
     return {
-      success: true,
-      result: {
+      code: 200,
+      message: "AI 汇总分析任务已提交并在后台运行",
+      data: {
         id: synthesisId,
         status: "processing",
       },
@@ -219,8 +221,9 @@ export class ReadProjectAnalysis extends OpenAPIRoute {
         description: "Returns synthesis report results",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.any(),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.any(),
           })
         ),
       },
@@ -234,7 +237,7 @@ export class ReadProjectAnalysis extends OpenAPIRoute {
 
     const report = await db.prepare("SELECT * FROM project_analyses WHERE id = ?").bind(synthesisId).first();
     if (!report) {
-      return c.json({ success: false, error: "Synthesis report not found" }, 404);
+      return c.json({ code: 404, message: "汇总分析报告未找到", data: null }, 404);
     }
 
     const parsedResult = {
@@ -246,8 +249,9 @@ export class ReadProjectAnalysis extends OpenAPIRoute {
     };
 
     return {
-      success: true,
-      result: parsedResult,
+      code: 200,
+      message: "获取汇总分析报告详情成功",
+      data: parsedResult,
     };
   }
 }
@@ -267,8 +271,9 @@ export class ListProjectAnalyses extends OpenAPIRoute {
         description: "Returns a list of synthesis reports",
         ...contentJson(
           z.object({
-            success: z.boolean(),
-            result: z.array(z.any()),
+            code: z.number().int(),
+            message: z.string(),
+            data: z.array(z.any()),
           })
         ),
       },
@@ -286,8 +291,9 @@ export class ListProjectAnalyses extends OpenAPIRoute {
       .all();
 
     return {
-      success: true,
-      result: results,
+      code: 200,
+      message: "获取项目汇总分析报告列表成功",
+      data: results,
     };
   }
 }

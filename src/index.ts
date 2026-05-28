@@ -70,32 +70,29 @@ app.use("/api/competitors/*", async (c, next) => {
 // 全局异常捕捉
 // ============================================================
 app.onError((err, c) => {
+  let status = 500;
+  let message = err.message || "Internal Server Error";
+
   if (err instanceof ApiException) {
-    return c.json(
-      { success: false, errors: err.buildResponse() },
-      err.status as ContentfulStatusCode,
-    );
+    status = err.status || 400;
+    message = JSON.stringify(err.buildResponse());
   }
 
   // 针对 JWT 校验失败给出友好提示
   if (err.name === "JwtTokenInvalid" || err.name === "JwtTokenExpired" || err.message?.includes("jwt")) {
-    return c.json(
-      {
-        success: false,
-        error: "鉴权失败，请重新登录管理系统 (Unauthorized)",
-      },
-      401
-    );
+    status = 401;
+    message = "鉴权失败，请重新登录管理系统";
   }
 
   console.error("Global error handler caught:", err);
 
   return c.json(
     {
-      success: false,
-      errors: [{ code: 7000, message: err.message || "Internal Server Error" }],
+      code: status,
+      message: message,
+      data: null
     },
-    500,
+    status as ContentfulStatusCode,
   );
 });
 
