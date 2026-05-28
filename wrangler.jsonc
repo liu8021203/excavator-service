@@ -1,0 +1,16 @@
+{
+	"compatibility_date": "2025-10-08",
+	"main": "src/index.ts",
+	"name": "excavator-service",
+	"upload_source_maps": true,
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "excavator-service-db",
+			"database_id": "63641ac8-c7f0-43ef-8c91-eaa92dd032ec"
+		}
+	]
+}
