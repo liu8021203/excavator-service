@@ -11,13 +11,16 @@ export const projectsRouter = fromHono(new Hono<{ Bindings: Env }>());
 export class CreateProject extends OpenAPIRoute {
   schema = {
     tags: ["Projects"],
-    summary: "Create a new project, trigger AI market analysis and link to logged-in user",
+    summary:
+      "Create a new project, trigger AI market analysis and link to logged-in user",
     request: {
       body: contentJson(
         z.object({
-          description: z.string().min(5, "Description must be at least 5 characters long"),
+          description: z
+            .string()
+            .min(5, "Description must be at least 5 characters long"),
           name: z.string().optional(),
-        })
+        }),
       ),
     },
     responses: {
@@ -34,7 +37,7 @@ export class CreateProject extends OpenAPIRoute {
               market_analysis: z.string(),
               competitors: z.array(z.any()),
             }),
-          })
+          }),
         ),
       },
     },
@@ -50,7 +53,7 @@ export class CreateProject extends OpenAPIRoute {
 
     // 1. 获取 LLM Provider
     const provider = await getLLMProvider(db, c.env);
-    
+
     // 2. 构造 Prompt
     const systemPrompt = `You are a senior market research analyst.
 Analyze the user's proposed app idea and output a structured market analysis report in JSON format.
@@ -74,30 +77,40 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
 
     let llmResultStr = "";
     try {
-      llmResultStr = await provider.chat([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ], { response_format: 'json' });
+      llmResultStr = await provider.chat(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        { response_format: "json" },
+      );
     } catch (err: any) {
       throw new Error(`AI market analysis failed: ${err.message}`);
     }
-
+    console.log("ai result : ", llmResultStr);
     // 3. 解析 LLM 返回的 JSON
     let analysisData: any;
     try {
       let cleanStr = llmResultStr.trim();
       if (cleanStr.startsWith("```")) {
-        cleanStr = cleanStr.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+        cleanStr = cleanStr
+          .replace(/^```json\s*/i, "")
+          .replace(/```$/, "")
+          .trim();
       }
       analysisData = JSON.parse(cleanStr);
     } catch (err) {
-      console.error("Failed to parse LLM response as JSON. Raw response:", llmResultStr);
+      console.error(
+        "Failed to parse LLM response as JSON. Raw response:",
+        llmResultStr,
+      );
       throw new Error("AI returned invalid JSON structure.");
     }
 
     const projectId = generateUUID();
-    const finalProjectName = name || analysisData.project_name || "New Mining Project";
-    
+    const finalProjectName =
+      name || analysisData.project_name || "New Mining Project";
+
     // 查询当前使用的 llm_provider
     const providerRow = await db
       .prepare("SELECT value FROM settings WHERE key = ?")
@@ -106,24 +119,27 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
     const currentProvider = providerRow?.value || "deepseek";
 
     // 4. 将项目存入数据库 (写入 user_id 外键进行项目权限归属)
-    await db.prepare(
-      `INSERT INTO projects (id, name, description, market_analysis, llm_provider, status, user_id, created_at, updated_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-    ).bind(
-      projectId,
-      finalProjectName,
-      description,
-      JSON.stringify({ market_overview: analysisData.market_overview }),
-      currentProvider,
-      "analyzed",
-      userId
-    ).run();
+    await db
+      .prepare(
+        `INSERT INTO projects (id, name, description, market_analysis, llm_provider, status, user_id, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      )
+      .bind(
+        projectId,
+        finalProjectName,
+        description,
+        JSON.stringify({ market_overview: analysisData.market_overview }),
+        currentProvider,
+        "analyzed",
+        userId,
+      )
+      .run();
 
     // 5. 写入推荐的竞品
     const competitorsList = analysisData.competitors || [];
     const competitorInsertStmt = db.prepare(
       `INSERT INTO competitors (id, project_id, name, description, package_name, icon_url, rating, estimated_reviews, review_count, scrape_status, created_at, updated_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', datetime('now'), datetime('now'))`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', datetime('now'), datetime('now'))`,
     );
 
     const batch = [];
@@ -144,8 +160,8 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
           null,
           null,
           compRating,
-          estReviews
-        )
+          estReviews,
+        ),
       );
 
       insertedCompetitors.push({
@@ -168,7 +184,9 @@ Analyze the market and suggest 5 to 10 top direct/indirect competitors on Google
         id: projectId,
         name: finalProjectName,
         description: description,
-        market_analysis: JSON.stringify({ market_overview: analysisData.market_overview }),
+        market_analysis: JSON.stringify({
+          market_overview: analysisData.market_overview,
+        }),
         competitors: insertedCompetitors,
       },
     };
@@ -188,7 +206,7 @@ export class ListProjects extends OpenAPIRoute {
             code: z.number().int(),
             message: z.string(),
             data: z.array(z.any()),
-          })
+          }),
         ),
       },
     },
@@ -200,7 +218,9 @@ export class ListProjects extends OpenAPIRoute {
     const userId = jwtPayload?.id || null;
 
     const { results } = await db
-      .prepare("SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC")
+      .prepare(
+        "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC",
+      )
       .bind(userId)
       .all();
 
@@ -230,7 +250,7 @@ export class ReadProject extends OpenAPIRoute {
             code: z.number().int(),
             message: z.string(),
             data: z.any(),
-          })
+          }),
         ),
       },
     },
@@ -251,12 +271,17 @@ export class ReadProject extends OpenAPIRoute {
       .first();
 
     if (!project) {
-      return c.json({ code: 403, message: "项目不存在或无权访问", data: null }, 403);
+      return c.json(
+        { code: 403, message: "项目不存在或无权访问", data: null },
+        403,
+      );
     }
 
     // 查竞品
     const { results: competitors } = await db
-      .prepare("SELECT * FROM competitors WHERE project_id = ? ORDER BY rating DESC")
+      .prepare(
+        "SELECT * FROM competitors WHERE project_id = ? ORDER BY rating DESC",
+      )
       .bind(projectId)
       .all();
 
@@ -285,7 +310,7 @@ export class UpdateProject extends OpenAPIRoute {
           name: z.string().optional(),
           description: z.string().optional(),
           status: z.string().optional(),
-        })
+        }),
       ),
     },
     responses: {
@@ -296,7 +321,7 @@ export class UpdateProject extends OpenAPIRoute {
             code: z.number().int(),
             message: z.string(),
             data: z.any().nullable().optional(),
-          })
+          }),
         ),
       },
     },
@@ -318,7 +343,10 @@ export class UpdateProject extends OpenAPIRoute {
       .first();
 
     if (!project) {
-      return c.json({ code: 403, message: "项目不存在或无权操作", data: null }, 403);
+      return c.json(
+        { code: 403, message: "项目不存在或无权操作", data: null },
+        403,
+      );
     }
 
     const updates: string[] = [];
@@ -339,9 +367,12 @@ export class UpdateProject extends OpenAPIRoute {
 
     if (updates.length > 0) {
       updates.push("updated_at = datetime('now')");
-      params.push(projectId); 
+      params.push(projectId);
       const sql = `UPDATE projects SET ${updates.join(", ")} WHERE id = ?`;
-      await db.prepare(sql).bind(...params).run();
+      await db
+        .prepare(sql)
+        .bind(...params)
+        .run();
     }
 
     return {
@@ -370,7 +401,7 @@ export class DeleteProject extends OpenAPIRoute {
             code: z.number().int(),
             message: z.string(),
             data: z.any().nullable().optional(),
-          })
+          }),
         ),
       },
     },
@@ -391,7 +422,10 @@ export class DeleteProject extends OpenAPIRoute {
       .first();
 
     if (!project) {
-      return c.json({ code: 403, message: "项目不存在或无权操作", data: null }, 403);
+      return c.json(
+        { code: 403, message: "项目不存在或无权操作", data: null },
+        403,
+      );
     }
 
     await db.prepare("DELETE FROM projects WHERE id = ?").bind(projectId).run();
