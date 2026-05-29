@@ -27,22 +27,41 @@ export class GeminiProvider implements LLMProvider {
         systemMessages.map((m) => m.content).join("\n") + "\n\n";
     }
 
-    const contents = otherMessages.map((m, idx) => {
+    const contents = otherMessages.map((m) => {
       const role = m.role === "assistant" ? "model" : "user";
-      let text = m.content;
-      if (idx === 0 && systemInstruction) {
-        text = `${systemInstruction}[User Request]\n${text}`;
-      }
       return {
         role,
-        parts: [{ text }],
+        parts: [{ text: m.content }],
       };
     });
 
     const payload: any = {
       contents,
     };
-    console.log("prompt : ", payload);
+
+    if (systemInstruction) {
+      payload.systemInstruction = {
+        parts: [{ text: systemInstruction.trim() }],
+      };
+    }
+
+    if (options) {
+      const generationConfig: any = {};
+      if (options.temperature !== undefined) {
+        generationConfig.temperature = options.temperature;
+      }
+      if (options.max_tokens !== undefined) {
+        generationConfig.maxOutputTokens = options.max_tokens;
+      }
+      if (options.response_format === "json") {
+        generationConfig.responseMimeType = "application/json";
+      }
+      if (Object.keys(generationConfig).length > 0) {
+        payload.generationConfig = generationConfig;
+      }
+    }
+
+    console.log("prompt : ", JSON.stringify(payload, null, 2));
     // 运行 Cloudflare AI 绑定
     let response: any;
     try {
