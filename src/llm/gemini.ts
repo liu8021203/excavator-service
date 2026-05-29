@@ -72,12 +72,24 @@ export class GeminiProvider implements LLMProvider {
       );
     }
 
-    // 提取结果：Cloudflare Workers AI 的 LLM 接口通常直接返回 { response: "..." } 或者纯文本
+    // 提取结果：Cloudflare 代理的原生 Gemini 接口、普通 AI 接口或纯文本的兼容提取
     if (typeof response === "string") {
       return response;
     }
+
+    // 优先提取原生 Gemini/Google API 的结构
+    const nativeText = response?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (typeof nativeText === "string") {
+      return nativeText;
+    }
+
     return (
-      response?.response || response?.text || JSON.stringify(response) || ""
+      response?.response ||
+      response?.text ||
+      response?.result?.response ||
+      response?.result?.text ||
+      JSON.stringify(response) ||
+      ""
     );
   }
 }

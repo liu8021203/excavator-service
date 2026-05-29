@@ -58,4 +58,37 @@ describe("GeminiProvider Parameters Format", () => {
     expect(capturedPayload.generationConfig.maxOutputTokens).toBe(1500);
     expect(capturedPayload.generationConfig.responseMimeType).toBe("application/json");
   });
+
+  it("should correctly extract response text from native Gemini candidates format", async () => {
+    const mockNativeResponse = {
+      candidates: [
+        {
+          avgLogprobs: -0.24408692330364393,
+          content: {
+            parts: [
+              {
+                text: "The laws of thermodynamics are the fundamental principles...",
+                thoughtSignature: "CukdAY89a1/JNlElaHLRqgJBgLD..."
+              }
+            ],
+            role: "model"
+          },
+          finishReason: "STOP"
+        }
+      ]
+    };
+
+    const mockAi = {
+      run: async () => {
+        return mockNativeResponse;
+      },
+    };
+
+    const provider = new GeminiProvider(mockAi);
+    const messages = [{ role: "user", content: "What are the three laws of thermodynamics?" }];
+
+    const result = await provider.chat(messages);
+    
+    expect(result).toBe("The laws of thermodynamics are the fundamental principles...");
+  });
 });
