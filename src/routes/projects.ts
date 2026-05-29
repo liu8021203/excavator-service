@@ -57,14 +57,15 @@ export class CreateProject extends OpenAPIRoute {
     // 2. 构造 Prompt
     const systemPrompt = `You are a senior market research analyst.
 Analyze the user's proposed app idea and output a structured market analysis report in JSON format.
+All text values in the JSON (including "project_name", "market_overview", and the competitor's "description") MUST be written in Chinese (简体中文).
 The JSON must adhere to the following schema:
 {
-  "project_name": "A concise and catchy name for the project",
-  "market_overview": "A brief overview of the market trend, target audience, and main barriers.",
+  "project_name": "A concise and catchy name for the project (in Chinese)",
+  "market_overview": "A brief overview of the market trend, target audience, and main barriers (in Chinese).",
   "competitors": [
     {
       "name": "Competitor App Name",
-      "description": "Brief description of their core features, strengths, and weaknesses.",
+      "description": "Brief description of their core features, strengths, and weaknesses (in Chinese).",
       "rating": 4.2,
       "estimated_reviews": 50000
     }
