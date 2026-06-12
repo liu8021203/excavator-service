@@ -38,9 +38,9 @@ app.use("/api/analyses/*", requireAuth);
 app.use("/api/project-analyses/*", requireAuth);
 app.use("/api/settings/*", requireAuth);
 
-// 竞品管理：GET 方式（爬虫免签读取）和 PUT /scrape_status 状态变更进行放行，其他写操作（手动添加、删除）强制 JWT 鉴权
+// 竞品管理：GET（爬虫免签读取）和 PUT（爬虫更新 scrape_status）放行，POST/DELETE（手动添加/删除）强制 JWT 鉴权
 app.use("/api/competitors/*", async (c, next) => {
-  if (c.req.method === 'GET' || (c.req.method === 'PUT' && c.req.path.includes('/scrape_status'))) {
+  if (c.req.method === 'GET' || c.req.method === 'PUT') {
     return next();
   }
   return requireAuth(c, next);
