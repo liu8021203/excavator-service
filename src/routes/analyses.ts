@@ -1,11 +1,11 @@
 import { contentJson, OpenAPIRoute, fromHono } from "chanfana";
-import { AppContext } from "../types";
+import { AppContext, AppVariables } from "../types";
 import { z } from "zod";
 import { Hono } from "hono";
 import { generateUUID } from "../utils/id";
 import { getLLMProvider } from "../llm";
 
-export const analysesRouter = fromHono(new Hono<{ Bindings: Env }>());
+export const analysesRouter = fromHono(new Hono<{ Bindings: Env; Variables: AppVariables }>());
 
 // 1. 创建分析任务（支持后台运行）
 export class CreateAnalysis extends OpenAPIRoute {

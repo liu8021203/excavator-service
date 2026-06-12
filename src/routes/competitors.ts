@@ -1,10 +1,10 @@
 import { contentJson, OpenAPIRoute, fromHono } from "chanfana";
-import { AppContext } from "../types";
+import { AppContext, AppVariables } from "../types";
 import { z } from "zod";
 import { Hono } from "hono";
 import { generateUUID } from "../utils/id";
 
-export const competitorsRouter = fromHono(new Hono<{ Bindings: Env }>());
+export const competitorsRouter = fromHono(new Hono<{ Bindings: Env; Variables: AppVariables }>());
 
 // 1. 获取竞品列表
 export class ListCompetitors extends OpenAPIRoute {

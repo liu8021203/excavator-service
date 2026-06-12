@@ -1,10 +1,10 @@
 import { contentJson, OpenAPIRoute, fromHono } from "chanfana";
-import { AppContext } from "../types";
+import { AppContext, AppVariables } from "../types";
 import { z } from "zod";
 import { Hono } from "hono";
 import { generateUUID } from "../utils/id";
 
-export const reviewsRouter = fromHono(new Hono<{ Bindings: Env }>());
+export const reviewsRouter = fromHono(new Hono<{ Bindings: Env; Variables: AppVariables }>());
 
 // 评论的 Zod 校验 Schema，供批量上传用
 const singleReviewUploadSchema = z.object({

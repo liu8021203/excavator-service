@@ -1,11 +1,11 @@
 import { contentJson, OpenAPIRoute, fromHono } from "chanfana";
-import { AppContext } from "../types";
+import { AppContext, AppVariables } from "../types";
 import { z } from "zod";
 import { Hono } from "hono";
 import { generateUUID } from "../utils/id";
 import { getLLMProvider } from "../llm";
 
-export const projectsRouter = fromHono(new Hono<{ Bindings: Env }>());
+export const projectsRouter = fromHono(new Hono<{ Bindings: Env; Variables: AppVariables }>());
 
 // 1. 创建项目（触发 LLM 市场分析与竞品推荐，归属当前登录用户）
 export class CreateProject extends OpenAPIRoute {

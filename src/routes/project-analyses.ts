@@ -1,11 +1,11 @@
 import { contentJson, OpenAPIRoute, fromHono } from "chanfana";
-import { AppContext } from "../types";
+import { AppContext, AppVariables } from "../types";
 import { z } from "zod";
 import { Hono } from "hono";
 import { generateUUID } from "../utils/id";
 import { getLLMProvider } from "../llm";
 
-export const projectAnalysesRouter = fromHono(new Hono<{ Bindings: Env }>());
+export const projectAnalysesRouter = fromHono(new Hono<{ Bindings: Env; Variables: AppVariables }>());
 
 // 1. 创建项目级跨竞品汇总分析
 export class CreateProjectAnalysis extends OpenAPIRoute {

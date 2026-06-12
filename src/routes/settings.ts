@@ -1,9 +1,9 @@
 import { contentJson, OpenAPIRoute, fromHono } from "chanfana";
-import { AppContext } from "../types";
+import { AppContext, AppVariables } from "../types";
 import { z } from "zod";
 import { Hono } from "hono";
 
-export const settingsRouter = fromHono(new Hono<{ Bindings: Env }>());
+export const settingsRouter = fromHono(new Hono<{ Bindings: Env; Variables: AppVariables }>());
 
 // 1. 获取全部设置
 export class GetSettings extends OpenAPIRoute {

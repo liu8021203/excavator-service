@@ -1,11 +1,11 @@
 import { contentJson, OpenAPIRoute, fromHono } from "chanfana";
-import { AppContext } from "../types";
+import { AppContext, AppVariables } from "../types";
 import { z } from "zod";
 import { Hono } from "hono";
-import { sign } from "hono/jwt";
+import { signToken } from "../utils/jwt";
 import { generateUUID } from "../utils/id";
 
-export const authRouter = fromHono(new Hono<{ Bindings: Env }>());
+export const authRouter = fromHono(new Hono<{ Bindings: Env; Variables: AppVariables }>());
 
 // 1. 用户注册接口
 export class RegisterEndpoint extends OpenAPIRoute {
@@ -122,14 +122,7 @@ export class LoginEndpoint extends OpenAPIRoute {
       return c.json({ code: 401, message: "用户名或密码错误", data: null }, 401);
     }
 
-    const jwtSecret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
-    const payload = {
-      id: user.id,
-      username: user.username,
-      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7,
-    };
-
-    const token = await sign(payload, jwtSecret);
+    const token = await signToken({ id: user.id, username: user.username }, c.env);
 
     return {
       code: 200,

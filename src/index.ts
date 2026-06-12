@@ -1,8 +1,11 @@
 import { ApiException, fromHono } from "chanfana";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { jwt } from "hono/jwt";
 import { ContentfulStatusCode } from "hono/utils/http-status";
+import { HTTPException } from "hono/http-exception";
+import { AppVariables } from "./types";
+import { requireAuth } from "./middleware/auth";
+
 
 // 导入业务路由
 import { authRouter } from "./routes/auth";
@@ -14,7 +17,7 @@ import { projectAnalysesRouter } from "./routes/project-analyses";
 import { settingsRouter } from "./routes/settings";
 
 // Start a Hono app
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 // 开启全局跨域 CORS 允许，确保前端能顺利对接 API
 app.use("*", cors({
@@ -29,39 +32,20 @@ app.use("*", cors({
 // ============================================================
 // JWT 鉴权中间件精细化策略挂载
 // ============================================================
-app.use("/api/auth/me", (c, next) => {
-  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
-  return jwt({ secret })(c, next);
-});
-
-app.use("/api/projects/*", (c, next) => {
-  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
-  return jwt({ secret })(c, next);
-});
-
-app.use("/api/analyses/*", (c, next) => {
-  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
-  return jwt({ secret })(c, next);
-});
-
-app.use("/api/project-analyses/*", (c, next) => {
-  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
-  return jwt({ secret })(c, next);
-});
-
-app.use("/api/settings/*", (c, next) => {
-  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
-  return jwt({ secret })(c, next);
-});
+app.use("/api/auth/me", requireAuth);
+app.use("/api/projects/*", requireAuth);
+app.use("/api/analyses/*", requireAuth);
+app.use("/api/project-analyses/*", requireAuth);
+app.use("/api/settings/*", requireAuth);
 
 // 竞品管理：GET 方式（爬虫免签读取）和 PUT /scrape_status 状态变更进行放行，其他写操作（手动添加、删除）强制 JWT 鉴权
 app.use("/api/competitors/*", async (c, next) => {
   if (c.req.method === 'GET' || (c.req.method === 'PUT' && c.req.path.includes('/scrape_status'))) {
     return next();
   }
-  const secret = c.env.JWT_SECRET || "excavator-jwt-secret-key-fallback";
-  return jwt({ secret })(c, next);
+  return requireAuth(c, next);
 });
+
 
 // 评论管理（ reviews ）：全部放行，爬虫 CLI 上传回传与查询零门槛免签
 // （默认已全部放行，不设拦截即为免签）
@@ -76,10 +60,19 @@ app.onError((err, c) => {
   if (err instanceof ApiException) {
     status = err.status || 400;
     message = JSON.stringify(err.buildResponse());
+  } else if (err instanceof HTTPException) {
+    status = err.status;
+    message = err.message;
   }
 
   // 针对 JWT 校验失败给出友好提示
-  if (err.name === "JwtTokenInvalid" || err.name === "JwtTokenExpired" || err.message?.includes("jwt")) {
+  if (
+    status === 401 ||
+    err.name === "JwtTokenInvalid" ||
+    err.name === "JwtTokenExpired" ||
+    err.message?.includes("jwt") ||
+    err.message?.includes("authorization")
+  ) {
     status = 401;
     message = "鉴权失败，请重新登录管理系统";
   }
