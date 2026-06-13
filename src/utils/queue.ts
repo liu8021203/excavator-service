@@ -424,46 +424,52 @@ export async function processProjectAnalysisTask(synthesisId: string, env: Env, 
     });
 
     // 核心战略分析 Prompt
-    const systemPrompt = `You are a master product strategist and venture capitalist.
-You are given the review analysis reports of multiple competitor apps in the same industry.
-Your task is to conduct a cross-competitor synthesis and construct an exhaustive product strategy report.
+    const systemPrompt = `你是一位资深的产品战略专家和风险投资人。
+你将收到同一行业中多款竞品应用的用户评论分析报告。
+你的任务是进行跨竞品交叉对比分析，并输出一份详尽的产品战略报告。
 
-You MUST structure the JSON output exactly according to this schema:
+## 语言要求（最高优先级）
+- **所有输出内容必须使用简体中文**，包括 title、description、reason、frequency_desc、feature 等所有字段。
+- 如果输入数据中包含英文内容，你必须翻译为简体中文后再填入。
+- **严禁输出任何英文内容**。违反此规则将被视为失败输出。
+
+## 输出格式
+严格按照以下 JSON 格式输出：
 {
   "common_pain_points": [
     {
-      "title": "Consolidated industry pain point",
+      "title": "行业共性痛点标题",
       "severity": "high" | "medium" | "low",
-      "competitors": ["App A Name", "App B Name"],
-      "frequency_desc": "Brief details of this pain point across the market."
+      "competitors": ["竞品A名称", "竞品B名称"],
+      "frequency_desc": "该痛点在行业中的表现概述"
     }
   ],
   "differentiation": [
     {
-      "feature": "A unique differentiator we can build",
-      "only_in_competitor": "Competitor App A Name", // Leave null if completely missing in all competitors
-      "missing_in": ["Competitor App B Name", "Competitor App C Name"],
-      "description": "How this feature can be our secret weapon."
+      "feature": "可构建的差异化功能",
+      "only_in_competitor": "仅某竞品拥有的名称", // 如果所有竞品都缺失则为 null
+      "missing_in": ["缺失该功能的竞品B", "缺失该功能的竞品C"],
+      "description": "该功能如何成为我们的核心竞争武器"
     }
   ],
   "feature_matrix": [
     {
-      "feature": "Core Feature Name (e.g. Calorie Scanner, Sleep Track)",
+      "feature": "核心功能名称（如：卡路里扫描、睡眠追踪）",
       "competitors": {
-        "Competitor App A Name": true,
-        "Competitor App B Name": false
+        "竞品A名称": true,
+        "竞品B名称": false
       }
     }
   ],
   "priority_suggestions": [
     {
-      "title": "Recommended Product Action",
-      "reason": "Detailed logic based on competitor findings.",
+      "title": "推荐的产品行动",
+      "reason": "基于竞品分析结果的详细逻辑推导",
       "priority": "P0" | "P1" | "P2"
     }
   ]
 }
-Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`json.`;
+仅返回合法的 JSON，不要包含 markdown 代码块标记如 \`\`\`json。`;
 
     const userPrompt = `Competitor Reports:\n${JSON.stringify(competitorReports, null, 2)}`;
 
