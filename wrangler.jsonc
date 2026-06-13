@@ -15,5 +15,20 @@
 	],
 	"ai": {
 		"binding": "AI"
+	},
+	"queues": {
+		"producers": [
+			{
+				"binding": "ANALYSIS_QUEUE",
+				"queue": "excavator-analysis-queue"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "excavator-analysis-queue",
+				"max_batch_size": 1,
+				"max_batch_timeout": 2
+			}
+		]
 	}
 }

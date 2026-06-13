@@ -20,6 +20,7 @@ declare global {
     DEEPSEEK_API_KEY?: string;
     GEMINI_API_KEY?: string;
     JWT_SECRET?: string;
+    ANALYSIS_QUEUE: Queue<{ analysisId: string }>;
   }
 }
 

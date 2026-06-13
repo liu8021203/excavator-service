@@ -113,5 +113,22 @@ openapi.route("/api/settings", settingsRouter);
 // 默认根路径跳转到文档页
 app.get("/", (c) => c.redirect("/docs"));
 
-// Export the Hono app
-export default app;
+import { processAnalysisTask } from "./utils/queue";
+
+// Export the Worker handlers
+export default {
+  fetch: app.fetch,
+  async queue(batch: MessageBatch<{ analysisId: string }>, env: Env, ctx: ExecutionContext): Promise<void> {
+    for (const message of batch.messages) {
+      const { analysisId } = message.body;
+      console.log(`[Queue Consumer] Received analysis task: ${analysisId}`);
+      try {
+        await processAnalysisTask(analysisId, env, ctx);
+        message.ack();
+      } catch (err) {
+        console.error(`[Queue Consumer] Process failed for analysis ${analysisId}:`, err);
+        message.retry();
+      }
+    }
+  }
+};

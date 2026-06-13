@@ -17,7 +17,7 @@ export class CreateAnalysis extends OpenAPIRoute {
         z.object({
           competitor_id: z.string(),
           rating_filter: z.enum(["negative", "positive"]),
-          batch_size: z.number().int().optional().default(500),
+          batch_size: z.number().int().optional().default(300),
         })
       ),
     },
@@ -66,12 +66,13 @@ export class CreateAnalysis extends OpenAPIRoute {
 
     const providerRow = await db.prepare("SELECT value FROM settings WHERE key = ?").bind("llm_provider").first<{ value: string }>();
     const currentProvider = providerRow?.value || "deepseek";
+    console.log("currentProvider : ", currentProvider);
     const modelRow = await db.prepare(`SELECT value FROM settings WHERE key = ?`).bind(`llm_model_${currentProvider}`).first<{ value: string }>();
     const currentModel = modelRow?.value || (currentProvider === "deepseek" ? "deepseek-chat" : "google/gemini-3.1-pro");
 
     await db.prepare(
       `INSERT INTO analyses (id, competitor_id, rating_filter, total_reviews, batch_size, status, llm_provider, llm_model, created_at, updated_at) 
-       VALUES (?, ?, ?, ?, ?, 'processing', ?, ?, datetime('now'), datetime('now'))`
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, datetime('now'), datetime('now'))`
     ).bind(
       analysisId,
       competitor_id,
@@ -82,181 +83,15 @@ export class CreateAnalysis extends OpenAPIRoute {
       currentModel
     ).run();
 
-    c.executionCtx.waitUntil(
-      (async () => {
-        try {
-          const provider = await getLLMProvider(db, c.env);
-          const batchesCount = Math.ceil(totalReviews / batch_size);
-          const batchResults: any[] = [];
-
-          for (let i = 0; i < batchesCount; i++) {
-            const start = i * batch_size;
-            const end = Math.min(start + batch_size, totalReviews);
-            const batchReviews = rawReviews.slice(start, end);
-
-            const batchId = generateUUID();
-            await db.prepare(
-              `INSERT INTO analysis_batches (id, analysis_id, batch_index, review_count, status, created_at) 
-               VALUES (?, ?, ?, ?, 'processing', datetime('now'))`
-            ).bind(batchId, analysisId, i, batchReviews.length).run();
-
-            const reviewsText = batchReviews
-              .map((r, idx) => `[Review #${idx + 1}] Date: ${r.review_date} | Rating: ${r.rating}* | Likes: ${r.thumbs_up}\nUser: ${r.user_name || "Anonymous"}\nContent: ${r.text || ""}`)
-              .join("\n---\n");
-
-            const systemPrompt = `You are a brilliant market researcher and product manager.
-Your task is to analyze a batch of user reviews for the competitor app "${competitor.name}" and extract structured insights.
-Output the results in JSON format matching this schema:
-{
-  "pain_points": [
-    {
-      "title": "A concise title of the pain point",
-      "frequency": 12,
-      "quotes": ["Representative user quote 1", "Representative user quote 2"]
-    }
-  ],
-  "feature_requests": [
-    {
-      "title": "A concise title of the requested feature or improvement",
-      "frequency": 8,
-      "quotes": ["Representative user quote"]
-    }
-  ],
-  "sentiment_summary": "A brief summary of user emotions (frustrated, angry, loving the UI but hating bugs, etc.)",
-  "opportunities": [
-    {
-      "title": "Opportunity title",
-      "description": "How we can leverage this pain point or feature request to make our own app superior."
-    }
-  ]
-}
-Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`json.`;
-
-            const userPrompt = `Here is a batch of ${batchReviews.length} user reviews:\n\n${reviewsText}`;
-
-            let responseStr = "";
-            try {
-              responseStr = await provider.chat([
-                { role: "system", content: systemPrompt },
-                { role: "user", content: userPrompt }
-              ], { response_format: "json" });
-            } catch (err: any) {
-              await db.prepare("UPDATE analysis_batches SET status = 'failed' WHERE id = ?").bind(batchId).run();
-              throw err;
-            }
-
-            let cleanResponse = responseStr.trim();
-            if (cleanResponse.startsWith("```")) {
-              cleanResponse = cleanResponse.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
-            }
-
-            let parsedResult: any;
-            try {
-              parsedResult = JSON.parse(cleanResponse);
-            } catch {
-              console.error("Batch parse failed. Raw response:", responseStr);
-              parsedResult = { pain_points: [], feature_requests: [], sentiment_summary: "Parsing error", opportunities: [] };
-            }
-
-            await db.prepare(
-              "UPDATE analysis_batches SET status = 'completed', result = ? WHERE id = ?"
-            ).bind(JSON.stringify(parsedResult), batchId).run();
-
-            batchResults.push(parsedResult);
-          }
-
-          let finalConsolidatedResult: any;
-
-          if (batchResults.length === 1) {
-            finalConsolidatedResult = batchResults[0];
-          } else {
-            const systemConsolidatePrompt = `You are a brilliant market researcher and product manager.
-You have analyzed multiple batches of user reviews for the competitor app "${competitor.name}".
-Now, combine these batch analysis results into a single, unified, high-quality final report.
-Combine similar pain points and feature requests, sum up or estimate their overall frequencies, select the best representative quotes, and generate cohesive overall sentiment and product opportunity summaries.
-Output the final consolidated report in JSON format matching this schema:
-{
-  "pain_points": [
-    {
-      "title": "Consolidated pain point title",
-      "frequency": 24,
-      "quotes": ["Quote 1", "Quote 2"]
-    }
-  ],
-  "feature_requests": [
-    {
-      "title": "Consolidated feature request title",
-      "frequency": 16,
-      "quotes": ["Quote"]
-    }
-  ],
-  "sentiment_summary": "A cohesive final summary of user emotions.",
-  "opportunities": [
-    {
-      "title": "Cohesive opportunity title",
-      "description": "Consolidated action item for our app."
-    }
-  ]
-}
-Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`json.`;
-
-            const userConsolidatePrompt = `Here are the batch results from ${batchResults.length} batches:\n\n${JSON.stringify(batchResults, null, 2)}`;
-
-            let reduceResponseStr = await provider.chat([
-              { role: "system", content: systemConsolidatePrompt },
-              { role: "user", content: userConsolidatePrompt }
-            ], { response_format: "json" });
-
-            let cleanReduce = reduceResponseStr.trim();
-            if (cleanReduce.startsWith("```")) {
-              cleanReduce = cleanReduce.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
-            }
-
-            try {
-              finalConsolidatedResult = JSON.parse(cleanReduce);
-            } catch {
-              console.error("Consolidated parse failed. Raw response:", reduceResponseStr);
-              finalConsolidatedResult = {
-                pain_points: batchResults.flatMap(b => b.pain_points || []),
-                feature_requests: batchResults.flatMap(b => b.feature_requests || []),
-                sentiment_summary: "Consolidation failed. Showing raw flattened results.",
-                opportunities: batchResults.flatMap(b => b.opportunities || []),
-              };
-            }
-          }
-
-          await db.prepare(
-            `UPDATE analyses 
-             SET status = 'completed', 
-                 pain_points = ?, 
-                 feature_requests = ?, 
-                 sentiment_summary = ?, 
-                 opportunities = ?, 
-                 updated_at = datetime('now') 
-             WHERE id = ?`
-          ).bind(
-            JSON.stringify(finalConsolidatedResult.pain_points || []),
-            JSON.stringify(finalConsolidatedResult.feature_requests || []),
-            finalConsolidatedResult.sentiment_summary || "",
-            JSON.stringify(finalConsolidatedResult.opportunities || []),
-            analysisId
-          ).run();
-
-        } catch (err: any) {
-          console.error("Background analysis failed:", err);
-          await db.prepare(
-            "UPDATE analyses SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?"
-          ).bind(err.message, analysisId).run();
-        }
-      })()
-    );
+    // 发送任务到消息队列进行后台串行处理
+    await c.env.ANALYSIS_QUEUE.send({ analysisId });
 
     return {
       code: 200,
-      message: "AI 分析任务已提交并在后台运行",
+      message: "AI 分析任务已提交并在后台队列排队处理中",
       data: {
         id: analysisId,
-        status: "processing",
+        status: "pending",
       },
     };
   }
