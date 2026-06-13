@@ -91,34 +91,40 @@ export async function processAnalysisTask(analysisId: string, env: Env, ctx: Exe
         )
         .join("\n---\n");
 
-      const systemPrompt = `You are a brilliant market researcher and product manager.
-Your task is to analyze a batch of user reviews for the competitor app "${competitor.name}" and extract structured insights.
-All text fields in the output JSON (including titles, quotes, sentiment summaries, and opportunities descriptions) MUST be written in Chinese (简体中文).
-Output the results in JSON format matching this schema:
+      const systemPrompt = `你是一位资深的市场研究专家和产品经理。
+你的任务是分析竞品应用「${competitor.name}」的一批用户评论，提取结构化的产品洞察。
+
+## 语言要求（最高优先级）
+- **所有输出内容必须使用简体中文**，包括 title、quotes、sentiment_summary、description 等所有字段。
+- 用户原始评论（quotes）如果是英文或其他语言，你必须翻译为简体中文后再填入。
+- **严禁输出任何英文内容**。违反此规则将被视为失败输出。
+
+## 输出格式
+严格按照以下 JSON 格式输出：
 {
   "pain_points": [
     {
-      "title": "A concise title of the pain point",
+      "title": "功能崩溃频繁",
       "frequency": 12,
-      "quotes": ["Representative user quote 1", "Representative user quote 2"]
+      "quotes": ["每次打开就闪退，太烦了", "更新后完全无法使用"]
     }
   ],
   "feature_requests": [
     {
-      "title": "A concise title of the requested feature or improvement",
+      "title": "希望增加离线模式",
       "frequency": 8,
-      "quotes": ["Representative user quote"]
+      "quotes": ["没有网络就没法用，希望能离线"]
     }
   ],
-  "sentiment_summary": "A brief summary of user emotions (frustrated, angry, loving the UI but hating bugs, etc.)",
+  "sentiment_summary": "用户整体情绪概述，例如：用户普遍对界面设计表示满意，但对频繁崩溃和广告过多感到强烈不满。",
   "opportunities": [
     {
-      "title": "Opportunity title",
-      "description": "How we can leverage this pain point or feature request to make our own app superior."
+      "title": "稳定性优势",
+      "description": "竞品崩溃问题严重，我们可通过卓越的应用稳定性赢得用户信任。"
     }
   ]
 }
-Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`json.`;
+仅返回合法的 JSON，不要包含 markdown 代码块标记如 \`\`\`json。`;
 
       const userPrompt = `Here is a batch of ${batchReviews.length} user reviews:\n\n${reviewsText}`;
 
@@ -171,36 +177,46 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
     if (batchResults.length === 1) {
       finalConsolidatedResult = batchResults[0];
     } else {
-      const systemConsolidatePrompt = `You are a brilliant market researcher and product manager.
-You have analyzed multiple batches of user reviews for the competitor app "${competitor.name}".
-Now, combine these batch analysis results into a single, unified, high-quality final report.
-Combine similar pain points and feature requests, sum up or estimate their overall frequencies, select the best representative quotes, and generate cohesive overall sentiment and product opportunity summaries.
-All text fields in the output JSON (including titles, quotes, sentiment summaries, and opportunities descriptions) MUST be written in Chinese (简体中文).
-Output the final consolidated report in JSON format matching this schema:
+      const systemConsolidatePrompt = `你是一位资深的市场研究专家和产品经理。
+你已经完成了对竞品应用「${competitor.name}」多个批次用户评论的分析。
+现在，请将这些分批分析结果合并为一份统一的、高质量的最终报告。
+
+## 合并规则
+- 合并相似的痛点和功能需求，累加或估算总频次。
+- 精选最具代表性的用户原声（quotes）。
+- 生成连贯的整体用户情绪概述和产品机会点。
+
+## 语言要求（最高优先级）
+- **所有输出内容必须使用简体中文**，包括 title、quotes、sentiment_summary、description 等所有字段。
+- 如果输入中的 quotes 是英文或其他语言，你必须翻译为简体中文后再填入。
+- **严禁输出任何英文内容**。违反此规则将被视为失败输出。
+
+## 输出格式
+严格按照以下 JSON 格式输出最终合并报告：
 {
   "pain_points": [
     {
-      "title": "Consolidated pain point title",
+      "title": "合并后的痛点标题",
       "frequency": 24,
-      "quotes": ["Quote 1", "Quote 2"]
+      "quotes": ["最具代表性的用户原声1", "最具代表性的用户原声2"]
     }
   ],
   "feature_requests": [
     {
-      "title": "Consolidated feature request title",
+      "title": "合并后的功能需求标题",
       "frequency": 16,
-      "quotes": ["Quote"]
+      "quotes": ["最具代表性的用户原声"]
     }
   ],
-  "sentiment_summary": "A cohesive final summary of user emotions.",
+  "sentiment_summary": "对用户整体情绪的连贯总结，例如：用户对核心功能总体满意，但对性能问题和缺少个性化设置感到不满。",
   "opportunities": [
     {
-      "title": "Cohesive opportunity title",
-      "description": "Consolidated action item for our app."
+      "title": "产品机会点标题",
+      "description": "基于竞品弱点的具体行动建议，说明我们如何利用此机会打造优势。"
     }
   ]
 }
-Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`json.`;
+仅返回合法的 JSON，不要包含 markdown 代码块标记如 \`\`\`json。`;
 
       const userConsolidatePrompt = `Here are the batch results from ${batchResults.length} batches:\n\n${JSON.stringify(
         batchResults,
@@ -208,7 +224,9 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
         2
       )}`;
 
-      let reduceResponseStr = await provider.chat(
+      const consolidateProvider = await getLLMProvider(db, env, true);
+
+      let reduceResponseStr = await consolidateProvider.chat(
         [
           { role: "system", content: systemConsolidatePrompt },
           { role: "user", content: userConsolidatePrompt },

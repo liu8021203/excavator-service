@@ -65,10 +65,18 @@ export class CreateProjectAnalysis extends OpenAPIRoute {
     const synthesisId = generateUUID();
 
     // 3. 查询当前使用的 llm 设置以记录元数据
-    const providerRow = await db.prepare("SELECT value FROM settings WHERE key = ?").bind("llm_provider").first<{ value: string }>();
-    const currentProvider = providerRow?.value || "deepseek";
-    const modelRow = await db.prepare(`SELECT value FROM settings WHERE key = ?`).bind(`llm_model_${currentProvider}`).first<{ value: string }>();
-    const currentModel = modelRow?.value || (currentProvider === "deepseek" ? "deepseek-chat" : "gemini-2.5-flash");
+    const consolidateProviderRow = await db.prepare("SELECT value FROM settings WHERE key = ?").bind("llm_provider_consolidate").first<{ value: string }>();
+    let currentProvider = consolidateProviderRow?.value || "same";
+    if (currentProvider === "same") {
+      const mainProviderRow = await db.prepare("SELECT value FROM settings WHERE key = ?").bind("llm_provider").first<{ value: string }>();
+      currentProvider = mainProviderRow?.value || "deepseek";
+    }
+    const modelKey = `llm_model_consolidate_${currentProvider}`;
+    let modelRow = await db.prepare(`SELECT value FROM settings WHERE key = ?`).bind(modelKey).first<{ value: string }>();
+    if (!modelRow || !modelRow.value) {
+      modelRow = await db.prepare(`SELECT value FROM settings WHERE key = ?`).bind(`llm_model_${currentProvider}`).first<{ value: string }>();
+    }
+    const currentModel = modelRow?.value || (currentProvider === "deepseek" ? "deepseek-chat" : "google/gemini-3.1-pro");
 
     // 4. 在 D1 中创建汇总分析记录，状态设为 'processing'
     await db.prepare(
@@ -86,7 +94,7 @@ export class CreateProjectAnalysis extends OpenAPIRoute {
     c.executionCtx.waitUntil(
       (async () => {
         try {
-          const provider = await getLLMProvider(db, c.env);
+          const provider = await getLLMProvider(db, c.env, true);
 
           // 整理各竞品的分析报告作为大模型上下文
           const competitorReports = analysesList.map(a => {
