@@ -93,6 +93,7 @@ export async function processAnalysisTask(analysisId: string, env: Env, ctx: Exe
 
       const systemPrompt = `You are a brilliant market researcher and product manager.
 Your task is to analyze a batch of user reviews for the competitor app "${competitor.name}" and extract structured insights.
+All text fields in the output JSON (including titles, quotes, sentiment summaries, and opportunities descriptions) MUST be written in Chinese (简体中文).
 Output the results in JSON format matching this schema:
 {
   "pain_points": [
@@ -174,6 +175,7 @@ Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`
 You have analyzed multiple batches of user reviews for the competitor app "${competitor.name}".
 Now, combine these batch analysis results into a single, unified, high-quality final report.
 Combine similar pain points and feature requests, sum up or estimate their overall frequencies, select the best representative quotes, and generate cohesive overall sentiment and product opportunity summaries.
+All text fields in the output JSON (including titles, quotes, sentiment summaries, and opportunities descriptions) MUST be written in Chinese (简体中文).
 Output the final consolidated report in JSON format matching this schema:
 {
   "pain_points": [
