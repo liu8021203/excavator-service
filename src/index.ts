@@ -113,7 +113,7 @@ openapi.route("/api/settings", settingsRouter);
 // 默认根路径跳转到文档页
 app.get("/", (c) => c.redirect("/docs"));
 
-import { processAnalysisTask } from "./utils/queue";
+import { processAnalysisTask, processProjectAnalysisTask } from "./utils/queue";
 
 // Export the Worker handlers
 export default {
@@ -121,12 +121,24 @@ export default {
   async queue(batch: MessageBatch<{ analysisId: string }>, env: Env, ctx: ExecutionContext): Promise<void> {
     for (const message of batch.messages) {
       const { analysisId } = message.body;
-      console.log(`[Queue Consumer] Received analysis task: ${analysisId}`);
+      console.log(`[Queue Consumer] Received task: ${analysisId}`);
       try {
-        await processAnalysisTask(analysisId, env, ctx);
+        const db = env.DB;
+        // 动态判断任务是单竞品分析还是项目级汇总分析
+        const isSingle = await db.prepare("SELECT id FROM analyses WHERE id = ?").bind(analysisId).first();
+        if (isSingle) {
+          await processAnalysisTask(analysisId, env, ctx);
+        } else {
+          const isProject = await db.prepare("SELECT id FROM project_analyses WHERE id = ?").bind(analysisId).first();
+          if (isProject) {
+            await processProjectAnalysisTask(analysisId, env, ctx);
+          } else {
+            console.error(`[Queue Consumer] Task ${analysisId} not found in D1 database.`);
+          }
+        }
         message.ack();
       } catch (err) {
-        console.error(`[Queue Consumer] Process failed for analysis ${analysisId}:`, err);
+        console.error(`[Queue Consumer] Process failed for task ${analysisId}:`, err);
         message.retry();
       }
     }

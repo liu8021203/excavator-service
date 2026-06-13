@@ -297,7 +297,7 @@ export async function processAnalysisTask(analysisId: string, env: Env, ctx: Exe
         2
       )}`;
 
-      const consolidateProvider = await getLLMProvider(db, env, true);
+      const consolidateProvider = await getLLMProvider(db, env, 'reduce');
 
       let reduceResponseStr = await consolidateProvider.chat(
         [
@@ -361,3 +361,160 @@ export async function processAnalysisTask(analysisId: string, env: Env, ctx: Exe
     throw err;
   }
 }
+
+/**
+ * 队列消费者处理函数：项目级跨竞品汇总分析
+ */
+export async function processProjectAnalysisTask(synthesisId: string, env: Env, ctx: ExecutionContext): Promise<void> {
+  const db = env.DB;
+
+  // 1. 获取汇总分析任务
+  const report = await db
+    .prepare("SELECT * FROM project_analyses WHERE id = ?")
+    .bind(synthesisId)
+    .first<{
+      id: string;
+      project_id: string;
+      status: string;
+    }>();
+
+  if (!report) {
+    console.error(`[Queue] Project analysis ${synthesisId} not found.`);
+    return;
+  }
+
+  // 已经完成则跳过
+  if (report.status === "completed") {
+    return;
+  }
+
+  // 2. 将状态标记为 processing
+  await db
+    .prepare("UPDATE project_analyses SET status = 'processing', updated_at = datetime('now') WHERE id = ?")
+    .bind(synthesisId)
+    .run();
+
+  const project_id = report.project_id;
+
+  try {
+    // 3. 查出该项目下所有已完成的单竞品分析
+    const { results: analysesList } = await db.prepare(
+      `SELECT a.*, c.name as competitor_name 
+       FROM analyses a
+       JOIN competitors c ON a.competitor_id = c.id
+       WHERE c.project_id = ? AND a.status = 'completed'`
+    ).bind(project_id).all<any>();
+
+    if (analysesList.length === 0) {
+      throw new Error("该项目下暂无已完成的单竞品分析，无法进行交叉对比。");
+    }
+
+    const provider = await getLLMProvider(db, env, 'project');
+
+    // 整理各竞品的分析报告作为大模型上下文
+    const competitorReports = analysesList.map(a => {
+      return {
+        competitor_name: a.competitor_name,
+        rating_filter: a.rating_filter,
+        pain_points: a.pain_points ? JSON.parse(a.pain_points) : [],
+        feature_requests: a.feature_requests ? JSON.parse(a.feature_requests) : [],
+        opportunities: a.opportunities ? JSON.parse(a.opportunities) : [],
+        sentiment_summary: a.sentiment_summary || ""
+      };
+    });
+
+    // 核心战略分析 Prompt
+    const systemPrompt = `You are a master product strategist and venture capitalist.
+You are given the review analysis reports of multiple competitor apps in the same industry.
+Your task is to conduct a cross-competitor synthesis and construct an exhaustive product strategy report.
+
+You MUST structure the JSON output exactly according to this schema:
+{
+  "common_pain_points": [
+    {
+      "title": "Consolidated industry pain point",
+      "severity": "high" | "medium" | "low",
+      "competitors": ["App A Name", "App B Name"],
+      "frequency_desc": "Brief details of this pain point across the market."
+    }
+  ],
+  "differentiation": [
+    {
+      "feature": "A unique differentiator we can build",
+      "only_in_competitor": "Competitor App A Name", // Leave null if completely missing in all competitors
+      "missing_in": ["Competitor App B Name", "Competitor App C Name"],
+      "description": "How this feature can be our secret weapon."
+    }
+  ],
+  "feature_matrix": [
+    {
+      "feature": "Core Feature Name (e.g. Calorie Scanner, Sleep Track)",
+      "competitors": {
+        "Competitor App A Name": true,
+        "Competitor App B Name": false
+      }
+    }
+  ],
+  "priority_suggestions": [
+    {
+      "title": "Recommended Product Action",
+      "reason": "Detailed logic based on competitor findings.",
+      "priority": "P0" | "P1" | "P2"
+    }
+  ]
+}
+Return ONLY valid JSON. Do not include markdown code block backticks like \`\`\`json.`;
+
+    const userPrompt = `Competitor Reports:\n${JSON.stringify(competitorReports, null, 2)}`;
+
+    let responseStr = "";
+    try {
+      responseStr = await provider.chat([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ], { response_format: "json" });
+    } catch (err: any) {
+      throw err;
+    }
+
+    // 过滤与解析 JSON
+    let cleanResponse = responseStr.trim();
+    if (cleanResponse.startsWith("```")) {
+      cleanResponse = cleanResponse.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+    }
+
+    let parsedResult: any;
+    try {
+      parsedResult = JSON.parse(cleanResponse);
+    } catch {
+      console.error("Project synthesis parse failed. Raw response:", responseStr);
+      throw new Error("AI returned invalid JSON for project synthesis.");
+    }
+
+    // 写入 D1
+    await db.prepare(
+      `UPDATE project_analyses 
+       SET status = 'completed', 
+           common_pain_points = ?, 
+           differentiation = ?, 
+           feature_matrix = ?, 
+           priority_suggestions = ?, 
+           updated_at = datetime('now') 
+       WHERE id = ?`
+    ).bind(
+      JSON.stringify(parsedResult.common_pain_points || []),
+      JSON.stringify(parsedResult.differentiation || []),
+      JSON.stringify(parsedResult.feature_matrix || []),
+      JSON.stringify(parsedResult.priority_suggestions || []),
+      synthesisId
+    ).run();
+
+  } catch (err: any) {
+    console.error("Cross-competitor synthesis failed:", err);
+    await db.prepare(
+      "UPDATE project_analyses SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?"
+    ).bind(err.message, synthesisId).run();
+    throw err;
+  }
+}
+

@@ -10,12 +10,30 @@ import { OpenAIProvider } from "./openai";
 export async function getLLMProvider(
   db: D1Database,
   env: Env,
-  isConsolidate: boolean = false,
+  stage: 'map' | 'reduce' | 'project' = 'map',
 ): Promise<LLMProvider> {
   let provider = "deepseek";
 
-  if (isConsolidate) {
-    // 1. 获取汇总阶段的提供商设置
+  if (stage === 'project') {
+    // 1. 获取跨竞品对比阶段的提供商设置
+    const projectProviderRow = await db
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .bind("llm_provider_project")
+      .first<{ value: string }>();
+    const projectProvider = projectProviderRow?.value || "same";
+
+    if (projectProvider && projectProvider !== "same") {
+      provider = projectProvider;
+    } else {
+      // 回退到主提供商
+      const providerRow = await db
+        .prepare("SELECT value FROM settings WHERE key = ?")
+        .bind("llm_provider")
+        .first<{ value: string }>();
+      provider = providerRow?.value || "deepseek";
+    }
+  } else if (stage === 'reduce') {
+    // 2. 获取汇总阶段的提供商设置
     const consolidateProviderRow = await db
       .prepare("SELECT value FROM settings WHERE key = ?")
       .bind("llm_provider_consolidate")
@@ -42,14 +60,20 @@ export async function getLLMProvider(
 
   if (provider === "deepseek") {
     // 查询 deepseek 的模型配置
-    const modelKey = isConsolidate ? "llm_model_consolidate_deepseek" : "llm_model_deepseek";
+    let modelKey = "llm_model_deepseek";
+    if (stage === 'project') {
+      modelKey = "llm_model_project_deepseek";
+    } else if (stage === 'reduce') {
+      modelKey = "llm_model_consolidate_deepseek";
+    }
+
     let modelRow = await db
       .prepare("SELECT value FROM settings WHERE key = ?")
       .bind(modelKey)
       .first<{ value: string }>();
 
-    // 如果汇总配置的模型为空，回退到主模型
-    if (isConsolidate && (!modelRow || !modelRow.value)) {
+    // 如果配置的模型为空，回退到主模型
+    if (stage !== 'map' && (!modelRow || !modelRow.value)) {
       modelRow = await db
         .prepare("SELECT value FROM settings WHERE key = ?")
         .bind("llm_model_deepseek")
@@ -66,14 +90,20 @@ export async function getLLMProvider(
     return new DeepSeekProvider(apiKey, model);
   } else if (provider === "gemini") {
     // 查询 gemini (Workers AI) 的模型配置
-    const modelKey = isConsolidate ? "llm_model_consolidate_gemini" : "llm_model_gemini";
+    let modelKey = "llm_model_gemini";
+    if (stage === 'project') {
+      modelKey = "llm_model_project_gemini";
+    } else if (stage === 'reduce') {
+      modelKey = "llm_model_consolidate_gemini";
+    }
+
     let modelRow = await db
       .prepare("SELECT value FROM settings WHERE key = ?")
       .bind(modelKey)
       .first<{ value: string }>();
 
-    // 如果汇总配置的模型为空，回退到主模型
-    if (isConsolidate && (!modelRow || !modelRow.value)) {
+    // 如果配置的模型为空，回退到主模型
+    if (stage !== 'map' && (!modelRow || !modelRow.value)) {
       modelRow = await db
         .prepare("SELECT value FROM settings WHERE key = ?")
         .bind("llm_model_gemini")
