@@ -121,3 +121,5 @@ export class WorkersAIProvider implements LLMProvider {
     );
   }
 }
+
+export { WorkersAIProvider as GeminiProvider };

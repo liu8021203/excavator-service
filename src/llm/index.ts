@@ -1,6 +1,7 @@
 import { LLMProvider } from "./adapter";
 import { DeepSeekProvider } from "./deepseek";
 import { WorkersAIProvider } from "./gemini";
+import { OpenAIProvider } from "./openai";
 
 /**
  * 根据数据库中的配置和环境变量，返回实例化好的 LLMProvider
@@ -86,6 +87,11 @@ export async function getLLMProvider(
         "Cloudflare Workers AI binding 'AI' is missing in environment variables. Make sure wrangler.jsonc has the AI binding configured.",
       );
     }
+
+    if (model.toLowerCase().includes("openai")) {
+      return new OpenAIProvider(env.AI, model);
+    }
+
     return new WorkersAIProvider(env.AI, model);
   } else {
     throw new Error(`Unsupported LLM provider: ${provider}`);
