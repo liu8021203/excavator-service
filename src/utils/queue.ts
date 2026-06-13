@@ -89,43 +89,75 @@ export async function processAnalysisTask(analysisId: string, env: Env, ctx: Exe
               r.user_name || "Anonymous"
             }\nContent: ${r.text || ""}`
         )
-        .join("\n---\n");
-
-      const systemPrompt = `你是一位资深的市场研究专家和产品经理。
-你的任务是分析竞品应用「${competitor.name}」的一批用户评论，提取结构化的产品洞察。
+        .join("\n---\n");      const systemPrompt = rating_filter === "negative"
+        ? `你是一位资深的市场研究专家和产品经理。
+你的任务是分析竞品应用「${competitor.name}」的一批用户差评（1-3星），挖掘出核心的产品缺陷与痛点。
 
 ## 语言要求（最高优先级）
 - **所有输出内容必须使用简体中文**，包括 title、quotes、sentiment_summary、description 等所有字段。
 - 用户原始评论（quotes）如果是英文或其他语言，你必须翻译为简体中文后再填入。
-- **严禁输出任何英文内容**。违反此规则将被视为失败输出。
+- **严禁输出任何英文内容**。
 
 ## 输出格式
-严格按照以下 JSON 格式输出：
+请分析用户差评，严格按照以下 JSON 格式输出痛点、功能诉求与我们产品的切入机会：
 {
   "pain_points": [
     {
-      "title": "功能崩溃频繁",
+      "title": "高频痛点/缺陷（如：应用频繁闪退崩溃）",
       "frequency": 12,
       "quotes": ["每次打开就闪退，太烦了", "更新后完全无法使用"]
     }
   ],
   "feature_requests": [
     {
-      "title": "希望增加离线模式",
+      "title": "功能改善/新增诉求（如：希望增加离线模式）",
       "frequency": 8,
       "quotes": ["没有网络就没法用，希望能离线"]
     }
   ],
-  "sentiment_summary": "用户整体情绪概述，例如：用户普遍对界面设计表示满意，但对频繁崩溃和广告过多感到强烈不满。",
+  "sentiment_summary": "用户负面情绪总结（如：用户普遍对频繁闪退感到烦躁和沮丧，甚至威胁要卸载）",
   "opportunities": [
     {
-      "title": "稳定性优势",
+      "title": "我们的切入/改善机会（如：以极高的稳定性切入市场）",
       "description": "竞品崩溃问题严重，我们可通过卓越的应用稳定性赢得用户信任。"
     }
   ]
 }
-仅返回合法的 JSON，不要包含 markdown 代码块标记如 \`\`\`json。`;
+仅返回合法的 JSON，不要包含 markdown 代码块标记如 \`\`\`json。`
+        : `你是一位资深的市场研究专家和产品经理。
+你的任务是分析竞品应用「${competitor.name}」的一批用户好评（4-5星），提炼出其核心的产品优势与亮点。
 
+## 语言要求（最高优先级）
+- **所有输出内容必须使用简体中文**，包括 title、quotes、sentiment_summary、description 等所有字段.
+- 用户原始评论（quotes）如果是英文或其他语言，你必须翻译为简体中文后再填入。
+- **严禁输出任何英文内容**。
+
+## 输出格式
+请分析用户好评，严格按照以下 JSON 格式输出亮点、喜爱功能与我们产品的防御/借鉴建议（注意：为了兼容数据库，请保持相同的 JSON 键名）：
+{
+  "pain_points": [
+    {
+      "title": "产品优势/亮点（如：界面设计美观现代，交互流畅）",
+      "frequency": 15,
+      "quotes": ["设计超级好看！", "滑动非常丝滑"]
+    }
+  ],
+  "feature_requests": [
+    {
+      "title": "最受喜爱的功能（如：每日精美卡片分享功能）",
+      "frequency": 10,
+      "quotes": ["每天分享的精美卡片很温馨"]
+    }
+  ],
+  "sentiment_summary": "用户正面情绪总结（如：用户对界面表现出强烈的喜爱与自豪感，整体感到愉悦和满足）",
+  "opportunities": [
+    {
+      "title": "我们产品的防御/借鉴建议（如：借鉴并升级其分享卡片设计）",
+      "description": "其卡片分享功能好评率极高，我们应设计更具个性化的分享卡片以进行竞争防御。"
+    }
+  ]
+}
+仅返回合法的 JSON，不要包含 markdown 代码块标记如 \`\`\`json。`;
       const userPrompt = `Here is a batch of ${batchReviews.length} user reviews:\n\n${reviewsText}`;
 
       let responseStr = "";
@@ -177,42 +209,83 @@ export async function processAnalysisTask(analysisId: string, env: Env, ctx: Exe
     if (batchResults.length === 1) {
       finalConsolidatedResult = batchResults[0];
     } else {
-      const systemConsolidatePrompt = `你是一位资深的市场研究专家和产品经理。
-你已经完成了对竞品应用「${competitor.name}」多个批次用户评论的分析。
-现在，请将这些分批分析结果合并为一份统一的、高质量的最终报告。
+      const systemConsolidatePrompt = rating_filter === "negative"
+        ? `你是一位资深的市场研究专家和产品经理。
+你已经完成了对竞品应用「${competitor.name}」多个批次用户差评的分析。
+现在，请将这些分批分析结果合并为一份统一的、高质量的最终痛点报告。
 
 ## 合并规则
-- 合并相似的痛点和功能需求，累加或估算总频次。
-- 精选最具代表性的用户原声（quotes）。
-- 生成连贯的整体用户情绪概述和产品机会点。
+- 合并相似的痛点和功能诉求，累加或估算总频次。
+- 精选最具代表性的用户差评原声（quotes）。
+- 生成连贯的整体用户负面情绪总结和产品切入机会建议。
 
 ## 语言要求（最高优先级）
 - **所有输出内容必须使用简体中文**，包括 title、quotes、sentiment_summary、description 等所有字段。
 - 如果输入中的 quotes 是英文或其他语言，你必须翻译为简体中文后再填入。
-- **严禁输出任何英文内容**。违反此规则将被视为失败输出。
+- **严禁输出任何英文内容**。
 
 ## 输出格式
 严格按照以下 JSON 格式输出最终合并报告：
 {
   "pain_points": [
     {
-      "title": "合并后的痛点标题",
+      "title": "合并后的痛点标题（如：部分机型闪退严重）",
       "frequency": 24,
-      "quotes": ["最具代表性的用户原声1", "最具代表性的用户原声2"]
+      "quotes": ["差评原声1", "差评原声2"]
     }
   ],
   "feature_requests": [
     {
-      "title": "合并后的功能需求标题",
+      "title": "合并后的功能改善/新增需求标题",
       "frequency": 16,
-      "quotes": ["最具代表性的用户原声"]
+      "quotes": ["诉求原声"]
     }
   ],
-  "sentiment_summary": "对用户整体情绪的连贯总结，例如：用户对核心功能总体满意，但对性能问题和缺少个性化设置感到不满。",
+  "sentiment_summary": "对用户负面情绪的连贯总结。",
   "opportunities": [
     {
-      "title": "产品机会点标题",
-      "description": "基于竞品弱点的具体行动建议，说明我们如何利用此机会打造优势。"
+      "title": "合并后的产品改进/切入机会标题",
+      "description": "基于竞品缺陷的具体行动建议。"
+    }
+  ]
+}
+仅返回合法的 JSON，不要包含 markdown 代码块标记如 \`\`\`json。`
+        : `你是一位资深的市场研究专家和产品经理。
+你已经完成了对竞品应用「${competitor.name}」多个批次用户好评的分析。
+现在，请将这些分批分析结果合并为一份统一的、高质量的最终亮点报告。
+
+## 合并规则
+- 合并相似的优势和亮点，累加或估算总频次。
+- 精选最具代表性的用户好评原声（quotes）。
+- 生成连贯的整体用户正面情绪总结和产品借鉴/防御建议。
+
+## 语言要求（最高优先级）
+- **所有输出内容必须使用简体中文**，包括 title、quotes、sentiment_summary、description 等所有字段。
+- 如果输入中的 quotes 是英文或其他语言，你必须翻译为简体中文后再填入。
+- **严禁输出任何英文内容**。
+
+## 输出格式
+严格按照以下 JSON 格式输出最终合并报告（注意：保持相同的 JSON 键名以兼容存储）：
+{
+  "pain_points": [
+    {
+      "title": "合并后的亮点优势标题（如：极致简洁的界面交互）",
+      "frequency": 30,
+      "quotes": ["好评原声1", "好评原声2"]
+    }
+  ],
+  "feature_requests": [
+    {
+      "title": "合并后的好评功能/模块标题",
+      "frequency": 20,
+      "quotes": ["好评原声"]
+    }
+  ],
+  "sentiment_summary": "对用户正面情绪的连贯总结。",
+  "opportunities": [
+    {
+      "title": "合并后的借鉴与防御建议标题",
+      "description": "基于竞品优势的具体跟进/防御策略描述。"
     }
   ]
 }
